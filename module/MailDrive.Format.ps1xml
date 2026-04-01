@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+  <ViewDefinitions>
+
+    <!-- MailFolderInfo Table View (IMAP only) -->
+    <View>
+      <Name>MailFolderInfo</Name>
+      <ViewSelectedBy>
+        <TypeName>MailDrive.Models.MailFolderInfo</TypeName>
+      </ViewSelectedBy>
+      <GroupBy>
+        <PropertyName>Directory</PropertyName>
+      </GroupBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label><Width>30</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Messages</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Unread</Label><Width>10</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Subfolders</Label><Width>12</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Attributes</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>MessageCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>UnreadCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>SubfolderCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Attributes</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- MailMessageInfo Table View (IMAP and POP3) -->
+    <View>
+      <Name>MailMessageInfo</Name>
+      <ViewSelectedBy>
+        <TypeName>MailDrive.Models.MailMessageInfo</TypeName>
+      </ViewSelectedBy>
+      <GroupBy>
+        <PropertyName>Directory</PropertyName>
+      </GroupBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Uid</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Date</Label><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Label>From</Label><Width>25</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Subject</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Read</Label><Width>5</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Size</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Uid</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>[string]::Format("{0:MM/dd HH:mm}", $_.Date)</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem><PropertyName>From</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Subject</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.IsRead) { "Y" } else { "" }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>
+                  if ($_.Size -ge 1MB) { "{0:N1}M" -f ($_.Size / 1MB) }
+                  elseif ($_.Size -ge 1KB) { "{0:N0}K" -f ($_.Size / 1KB) }
+                  else { $_.Size }
+                </ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+  </ViewDefinitions>
+</Configuration>

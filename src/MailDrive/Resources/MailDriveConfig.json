@@ -1,0 +1,30 @@
+{
+    // MailDrive Configuration
+    // Global defaults (applied to all drives unless overridden)
+    "Port": 993,
+    "Ssl": "Auto",
+    "SmtpPort": 587,
+    "SmtpSsl": "Auto",
+
+    "PSDrives": [
+        // IMAP example:
+        // {
+        //     "Name": "Gmail",
+        //     "Protocol": "IMAP",
+        //     "Host": "imap.gmail.com",
+        //     "Username": "user@gmail.com",
+        //     "Password": "app-password-here",
+        //     "SmtpHost": "smtp.gmail.com",
+        //     "Description": "Gmail"
+        // },
+        // POP3 example:
+        // {
+        //     "Name": "Legacy",
+        //     "Protocol": "POP3",
+        //     "Host": "pop.example.com",
+        //     "Port": 995,
+        //     "Username": "user",
+        //     "Password": "password"
+        // }
+    ]
+}

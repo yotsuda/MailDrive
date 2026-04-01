@@ -16,6 +16,9 @@
         'Send-Mail'
         'Reply-Mail'
         'Forward-Mail'
+        'Export-MailAttachment'
+        'New-MailDraft'
+        'Get-MailQuota'
     )
 
     FunctionsToExport    = @()

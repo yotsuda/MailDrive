@@ -22,8 +22,10 @@ public class ImapDriveInfo : MailDriveInfoBase
 
     public ImapDriveInfo(PSDriveInfo driveInfo, string host, int port, SecureSocketOptions ssl,
         string username, string password,
-        string? smtpHost = null, int smtpPort = 587, SecureSocketOptions smtpSsl = SecureSocketOptions.Auto)
-        : base(driveInfo, username, password, smtpHost, smtpPort, smtpSsl, $"imaps://{host}:{port}")
+        string? smtpHost = null, int smtpPort = 587, SecureSocketOptions smtpSsl = SecureSocketOptions.Auto,
+        bool useOAuth2 = false, string? tenantId = null, string? clientId = null)
+        : base(driveInfo, username, password, smtpHost, smtpPort, smtpSsl, $"imaps://{host}:{port}",
+               useOAuth2, tenantId, clientId)
     {
         _host = host;
         _port = port;
@@ -43,7 +45,15 @@ public class ImapDriveInfo : MailDriveInfoBase
                         _client?.Dispose();
                         _client = new ImapClient();
                         _client.Connect(_host, _port, _ssl);
-                        _client.Authenticate(MailUsername, MailPassword);
+                        if (UseOAuth2)
+                        {
+                            var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId);
+                            _client.Authenticate(new MailKit.Security.SaslMechanismOAuth2(MailUsername, token));
+                        }
+                        else
+                        {
+                            _client.Authenticate(MailUsername, MailPassword);
+                        }
                         _directorySeparator = null;
                     }
                 }
@@ -100,6 +110,32 @@ public class ImapDriveInfo : MailDriveInfoBase
 
     public void InvalidateMessages(string key)
         => _messageCache.TryRemove(key, out _);
+
+    // ── Special folders ──────────────────────────────────────────
+
+    public IMailFolder? GetTrashFolder()
+    {
+        try
+        {
+            // Try SpecialFolder first (XLIST / SPECIAL-USE)
+            var trash = Client.GetFolder(SpecialFolder.Trash);
+            if (trash != null && trash.Exists) return trash;
+        }
+        catch { }
+
+        // Fallback: search by well-known names
+        var root = Client.GetFolder(Client.PersonalNamespaces[0]);
+        foreach (var sub in root.GetSubfolders(false))
+        {
+            var name = sub.Name.ToLowerInvariant();
+            if (name is "trash" or "[gmail]/trash" or "deleted items" or "deleted messages")
+                return sub;
+            if (sub.Attributes.HasFlag(FolderAttributes.Trash))
+                return sub;
+        }
+
+        return null;
+    }
 
     // ── Dispose ─────────────────────────────────────────────────
 

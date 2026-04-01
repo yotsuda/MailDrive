@@ -5,6 +5,7 @@ using MailDrive.Provider;
 namespace MailDrive.Cmdlets;
 
 [Cmdlet(VerbsData.Import, "MailConfig")]
+[OutputType(typeof(MailDriveInfoBase))]
 public class ImportMailConfigCmdlet : PSCmdlet
 {
     [Parameter(Position = 0)]
@@ -104,6 +105,7 @@ public class ImportMailConfigCmdlet : PSCmdlet
 }
 
 [Cmdlet("Edit", "MailConfig")]
+[OutputType(typeof(string))]
 public class EditMailConfigCmdlet : PSCmdlet
 {
     [Parameter]

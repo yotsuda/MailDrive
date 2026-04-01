@@ -19,8 +19,10 @@ public class PopDriveInfo : MailDriveInfoBase
 
     public PopDriveInfo(PSDriveInfo driveInfo, string host, int port, SecureSocketOptions ssl,
         string username, string password,
-        string? smtpHost = null, int smtpPort = 587, SecureSocketOptions smtpSsl = SecureSocketOptions.Auto)
-        : base(driveInfo, username, password, smtpHost, smtpPort, smtpSsl, $"pop3s://{host}:{port}")
+        string? smtpHost = null, int smtpPort = 587, SecureSocketOptions smtpSsl = SecureSocketOptions.Auto,
+        bool useOAuth2 = false, string? tenantId = null, string? clientId = null)
+        : base(driveInfo, username, password, smtpHost, smtpPort, smtpSsl, $"pop3s://{host}:{port}",
+               useOAuth2, tenantId, clientId)
     {
         _host = host;
         _port = port;
@@ -40,7 +42,15 @@ public class PopDriveInfo : MailDriveInfoBase
                         _client?.Dispose();
                         _client = new Pop3Client();
                         _client.Connect(_host, _port, _ssl);
-                        _client.Authenticate(MailUsername, MailPassword);
+                        if (UseOAuth2)
+                        {
+                            var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId);
+                            _client.Authenticate(new MailKit.Security.SaslMechanismOAuth2(MailUsername, token));
+                        }
+                        else
+                        {
+                            _client.Authenticate(MailUsername, MailPassword);
+                        }
                     }
                 }
             }

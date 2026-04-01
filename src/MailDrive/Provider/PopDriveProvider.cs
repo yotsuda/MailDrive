@@ -86,7 +86,8 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
                 var dp = new PSDriveInfo(s.Name, ProviderInfo, s.Name + @":\", desc, null);
                 drives.Add(new PopDriveInfo(dp, s.Host, port, ssl,
                     s.Username ?? "", s.Password ?? "",
-                    s.SmtpHost, s.SmtpPort ?? 587, MailConfig.ParseSsl(s.SmtpSsl)));
+                    s.SmtpHost, s.SmtpPort ?? 587, MailConfig.ParseSsl(s.SmtpSsl),
+                    s.IsOAuth2, s.TenantId, s.ClientId));
             }
         }
         catch { }
@@ -140,9 +141,10 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
         var idx = ExtractMessageIndex(norm);
         if (idx == null || idx < 0 || idx >= Drive.Client.Count) return;
 
-        var headers = Drive.Client.GetMessageHeaders(idx.Value);
+        // Full fetch for single message — accurate HasAttachments
+        var message = Drive.Client.GetMessage(idx.Value);
         var size = Drive.Client.GetMessageSize(idx.Value);
-        var msg = BuildMessageInfo(headers, size, idx.Value, EnsureDrivePrefix(""));
+        var msg = BuildMessageInfoFromMime(message, size, idx.Value, EnsureDrivePrefix(""));
         WriteItemObject(msg, path, false);
     }
 
@@ -159,7 +161,10 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
 
         var messages = GetCachedMessages(directory, first);
         foreach (var msg in messages)
+        {
+            if (Stopping) return;
             WriteItemObject(msg, msg.Path, false);
+        }
     }
 
     protected override object? GetChildItemsDynamicParameters(string path, bool recurse)
@@ -175,7 +180,10 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
         var directory = EnsureDrivePrefix(path);
         var messages = GetCachedMessages(directory, 50);
         foreach (var msg in messages)
+        {
+            if (Stopping) return;
             WriteItemObject(msg.FileName, MakePath(path, msg.FileName), false);
+        }
     }
 
     // ── RemoveItem ──────────────────────────────────────────────
@@ -253,6 +261,7 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
 
             for (int i = count - 1; i >= start; i--)
             {
+                if (Stopping) return result;
                 try
                 {
                     var headers = client.GetMessageHeaders(i);
@@ -294,6 +303,15 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
         var displayIndex = (uint)(index + 1);
         var fileName = $"{displayIndex}_{MailHelpers.SanitizeFileName(fromName)}_{MailHelpers.SanitizeFileName(subjectStr)}.eml";
 
+        // Detect attachments from Content-Type header
+        var hasAttachments = false;
+        var contentType = headers[HeaderId.ContentType];
+        if (contentType != null)
+        {
+            // multipart/mixed typically indicates attachments
+            hasAttachments = contentType.Contains("multipart/mixed", StringComparison.OrdinalIgnoreCase);
+        }
+
         return new MailMessageInfo
         {
             Path = EnsureDrivePrefix(fileName),
@@ -305,7 +323,31 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
             To = MailHelpers.FormatAddress(toList),
             Date = date.LocalDateTime,
             IsRead = false,
-            HasAttachments = false,
+            HasAttachments = hasAttachments,
+            Size = size,
+        };
+    }
+
+    private MailMessageInfo BuildMessageInfoFromMime(MimeMessage message, int size, int index, string directory)
+    {
+        var subjectStr = message.Subject ?? "(no subject)";
+        var fromMailbox = message.From.Mailboxes.FirstOrDefault();
+        var fromName = fromMailbox?.Name ?? fromMailbox?.Address ?? "unknown";
+        var displayIndex = (uint)(index + 1);
+        var fileName = $"{displayIndex}_{MailHelpers.SanitizeFileName(fromName)}_{MailHelpers.SanitizeFileName(subjectStr)}.eml";
+
+        return new MailMessageInfo
+        {
+            Path = EnsureDrivePrefix(fileName),
+            Directory = directory,
+            Uid = displayIndex,
+            FileName = fileName,
+            Subject = subjectStr,
+            From = MailHelpers.FormatAddress(message.From),
+            To = MailHelpers.FormatAddress(message.To),
+            Date = message.Date.LocalDateTime,
+            IsRead = false,
+            HasAttachments = message.Attachments.Any(),
             Size = size,
         };
     }

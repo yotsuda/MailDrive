@@ -6,6 +6,7 @@ using MailKit.Security;
 namespace MailDrive.Cmdlets;
 
 [Cmdlet(VerbsCommon.New, "PopDrive")]
+[OutputType(typeof(PopDriveInfo))]
 public class NewPopDriveCmdlet : PSCmdlet
 {
     [Parameter(Position = 0)]
@@ -27,9 +28,18 @@ public class NewPopDriveCmdlet : PSCmdlet
     [ValidateNotNullOrEmpty]
     public string Username { get; set; } = "";
 
-    [Parameter(Mandatory = true)]
-    [ValidateNotNullOrEmpty]
+    [Parameter]
     public string Password { get; set; } = "";
+
+    [Parameter]
+    [ValidateSet("Password", "OAuth2")]
+    public string AuthMethod { get; set; } = "Password";
+
+    [Parameter]
+    public string? TenantId { get; set; }
+
+    [Parameter]
+    public string? ClientId { get; set; }
 
     [Parameter]
     public string Description { get; set; } = "";
@@ -53,9 +63,19 @@ public class NewPopDriveCmdlet : PSCmdlet
         var desc = string.IsNullOrEmpty(Description)
             ? $"{Username}@{Host}:{Port}" : Description;
 
+        var useOAuth2 = string.Equals(AuthMethod, "OAuth2", StringComparison.OrdinalIgnoreCase);
+        if (!useOAuth2 && string.IsNullOrEmpty(Password))
+        {
+            ThrowTerminatingError(new ErrorRecord(
+                new ArgumentException("Password is required when AuthMethod is 'Password'."),
+                "PasswordRequired", ErrorCategory.InvalidArgument, null));
+            return;
+        }
+
         var driveParams = new PSDriveInfo(Name, provider, Name + @":\", desc, null);
         var driveInfo = new PopDriveInfo(driveParams, Host, Port, sslOption,
-            Username, Password, SmtpHost, SmtpPort, smtpSslOption);
+            Username, Password, SmtpHost, SmtpPort, smtpSslOption,
+            useOAuth2, TenantId, ClientId);
 
         try
         {

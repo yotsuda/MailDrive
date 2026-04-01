@@ -27,6 +27,9 @@ public class MailMessageInfo
     public string To { get; set; } = "";
     public DateTime Date { get; set; }
     public bool IsRead { get; set; }
+    public bool IsFlagged { get; set; }
+    public bool IsAnswered { get; set; }
+    public bool IsDraft { get; set; }
     public bool HasAttachments { get; set; }
     public int Size { get; set; }
 }

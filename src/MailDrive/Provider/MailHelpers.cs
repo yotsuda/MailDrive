@@ -115,6 +115,65 @@ public class MailPaginationParameters
     public string? Search { get; set; }
 }
 
+public class MailContentWriter : IContentWriter
+{
+    private readonly ImapDriveInfo _drive;
+    private readonly IMailFolder _folder;
+    private readonly UniqueId _originalUid;
+    private readonly string _folderPath;
+    private readonly List<string> _lines = new();
+
+    public MailContentWriter(ImapDriveInfo drive, IMailFolder folder, UniqueId originalUid, string folderPath)
+    {
+        _drive = drive;
+        _folder = folder;
+        _originalUid = originalUid;
+        _folderPath = folderPath;
+    }
+
+    public System.Collections.IList Write(System.Collections.IList content)
+    {
+        foreach (var item in content)
+            _lines.Add(item?.ToString() ?? "");
+        return content;
+    }
+
+    public void Seek(long offset, SeekOrigin origin) { }
+
+    public void Close()
+    {
+        if (_lines.Count == 0) return;
+
+        // Fetch original to preserve headers
+        if (!_folder.IsOpen) _folder.Open(FolderAccess.ReadWrite);
+        try
+        {
+            var original = _folder.GetMessage(_originalUid);
+
+            // Replace body with new content
+            var newBody = string.Join("\n", _lines);
+            var builder = new BodyBuilder { TextBody = newBody };
+            original.Body = builder.ToMessageBody();
+
+            // Append new first, then delete original (prevents data loss if Append fails)
+            var appended = _folder.Append(original, MessageFlags.Draft | MessageFlags.Seen);
+            if (appended.HasValue)
+            {
+                _folder.AddFlags(_originalUid, MessageFlags.Deleted, true);
+                _folder.Expunge();
+            }
+        }
+        finally
+        {
+            try { if (_folder.IsOpen) _folder.Close(false); } catch { }
+        }
+
+        _drive.InvalidateMessages(_folderPath);
+    }
+
+    public void Dispose() { }
+}
+
 public class MailContentReader : IContentReader
 {
     private readonly string[] _lines;

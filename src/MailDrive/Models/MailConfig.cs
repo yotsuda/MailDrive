@@ -18,6 +18,11 @@ public class MailSettings
     public int? SmtpPort { get; set; }
     public string? SmtpSsl { get; set; }
 
+    /// <summary>"Password" (default) or "OAuth2"</summary>
+    public string? AuthMethod { get; set; }
+    public string? TenantId { get; set; }
+    public string? ClientId { get; set; }
+
     internal void CascadeFrom(MailConfig global)
     {
         Port ??= global.Port;
@@ -25,7 +30,13 @@ public class MailSettings
         SmtpHost ??= global.SmtpHost;
         SmtpPort ??= global.SmtpPort;
         SmtpSsl ??= global.SmtpSsl;
+        AuthMethod ??= global.AuthMethod;
+        TenantId ??= global.TenantId;
+        ClientId ??= global.ClientId;
     }
+
+    internal bool IsOAuth2 =>
+        string.Equals(AuthMethod, "OAuth2", StringComparison.OrdinalIgnoreCase);
 }
 
 public class MailConfig : MailSettings

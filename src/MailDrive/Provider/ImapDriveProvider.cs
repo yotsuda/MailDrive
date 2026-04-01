@@ -82,7 +82,8 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 var driveParams = new PSDriveInfo(s.Name, ProviderInfo, s.Name + @":\", desc, null);
                 var driveInfo = new ImapDriveInfo(driveParams, s.Host, port, ssl,
                     s.Username ?? "", s.Password ?? "",
-                    s.SmtpHost, s.SmtpPort ?? 587, MailConfig.ParseSsl(s.SmtpSsl));
+                    s.SmtpHost, s.SmtpPort ?? 587, MailConfig.ParseSsl(s.SmtpSsl),
+                    s.IsOAuth2, s.TenantId, s.ClientId);
                 drives.Add(driveInfo);
             }
         }
@@ -187,6 +188,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         List<string>? containers = recurse ? new() : null;
         foreach (var fi in subfolders)
         {
+            if (Stopping) return;
             WriteItemObject(fi, fi.Path, true);
             if (recurse) containers!.Add(fi.Path);
         }
@@ -198,12 +200,18 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 ? GetCachedMessages(norm, directory, first)
                 : SearchMessages(norm, directory, search, first);
             foreach (var msg in messages)
+            {
+                if (Stopping) return;
                 WriteItemObject(msg, msg.Path, false);
+            }
         }
 
         if (containers != null)
             foreach (var p in containers)
+            {
+                if (Stopping) return;
                 GetChildItems(p, true);
+            }
     }
 
     protected override object? GetChildItemsDynamicParameters(string path, bool recurse)
@@ -221,13 +229,19 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
         var subfolders = GetCachedSubfolders(norm, directory);
         foreach (var fi in subfolders)
+        {
+            if (Stopping) return;
             WriteItemObject(fi.Name, MakePath(path, fi.Name), true);
+        }
 
         if (info.Type != PathType.Root)
         {
             var messages = GetCachedMessages(norm, directory, 50);
             foreach (var msg in messages)
+            {
+                if (Stopping) return;
                 WriteItemObject(msg.FileName, MakePath(path, msg.FileName), false);
+            }
         }
     }
 
@@ -242,16 +256,49 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         {
             var uid = info.GetMessageUid();
             if (uid == null) return;
-            if (!ShouldProcess($"UID {uid} in {info.ImapFolderPath}", "Delete message")) return;
 
-            var folder = Drive.GetImapFolder(info.ImapFolderPath);
-            OpenFolderIfNeeded(folder, FolderAccess.ReadWrite);
+            // Default: move to Trash. -Force: permanent delete (expunge).
+            if (!Force)
+            {
+                var trash = Drive.GetTrashFolder();
+                if (trash != null)
+                {
+                    // Check if already in Trash
+                    var trashPath = trash.FullName.Replace(Drive.DirectorySeparator, '/');
+                    if (!info.ImapFolderPath.Equals(trashPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!ShouldProcess($"UID {uid} in {info.ImapFolderPath}", "Move to Trash")) return;
+
+                        var folder = Drive.GetImapFolder(info.ImapFolderPath);
+                        OpenFolderIfNeeded(folder, FolderAccess.ReadWrite);
+                        try
+                        {
+                            folder.MoveTo(new UniqueId(uid.Value), trash);
+                        }
+                        finally { TryClose(folder); }
+
+                        Drive.InvalidateMessages(info.ImapFolderPath);
+                        Drive.InvalidateMessages(trashPath);
+                        return;
+                    }
+                    // Already in Trash — fall through to permanent delete
+                }
+                else
+                {
+                    WriteWarning("Trash folder not found. Message will be permanently deleted.");
+                }
+            }
+
+            if (!ShouldProcess($"UID {uid} in {info.ImapFolderPath}", "Delete message permanently")) return;
+
+            var srcFolder = Drive.GetImapFolder(info.ImapFolderPath);
+            OpenFolderIfNeeded(srcFolder, FolderAccess.ReadWrite);
             try
             {
-                folder.AddFlags(new UniqueId(uid.Value), MessageFlags.Deleted, true);
-                folder.Expunge();
+                srcFolder.AddFlags(new UniqueId(uid.Value), MessageFlags.Deleted, true);
+                srcFolder.Expunge();
             }
-            finally { TryClose(folder); }
+            finally { TryClose(srcFolder); }
             Drive.InvalidateMessages(info.ImapFolderPath);
         }
         else if (info.Type == PathType.Folder)
@@ -271,6 +318,8 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         var info = ImapPathInfo.Parse(norm);
         if (info.Type != PathType.Folder) return;
 
+        if (!ShouldProcess(info.ImapFolderPath, "Create IMAP folder")) return;
+
         int lastSlash = info.ImapFolderPath.LastIndexOf('/');
         IMailFolder parent;
         string folderName;
@@ -289,6 +338,27 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         var fi = BuildFolderInfo(created, path);
         WriteItemObject(fi, path, true);
         Drive.InvalidateFolders(lastSlash < 0 ? "" : info.ImapFolderPath[..lastSlash]);
+    }
+
+    // ── RenameItem ───────────────────────────────────────────────
+
+    protected override void RenameItem(string path, string newName)
+    {
+        var norm = NormalizePath(path);
+        var info = ImapPathInfo.Parse(norm);
+        if (info.Type != PathType.Folder) return;
+
+        if (!ShouldProcess(info.ImapFolderPath, $"Rename to '{newName}'")) return;
+
+        var folder = Drive.GetImapFolder(info.ImapFolderPath);
+        var parent = folder.ParentFolder;
+        folder.Rename(parent, newName);
+
+        // Invalidate parent's folder cache
+        var parentPath = parent.FullName.Replace(Drive.DirectorySeparator, '/');
+        if (parentPath == Drive.Client.GetFolder(Drive.Client.PersonalNamespaces[0]).FullName)
+            parentPath = "";
+        Drive.InvalidateFolders(parentPath);
     }
 
     // ── MoveItem ─────────────────────────────────────────────────
@@ -396,7 +466,37 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
     public object? GetContentReaderDynamicParameters(string path) => null;
     public IContentWriter GetContentWriter(string path)
-        => throw new PSNotSupportedException("Writing content is not supported.");
+    {
+        var norm = NormalizePath(path);
+        var info = ImapPathInfo.Parse(norm);
+        if (info.Type != PathType.Message)
+            throw new PSNotSupportedException("Set-Content is only supported for draft messages.");
+
+        var uid = info.GetMessageUid()
+            ?? throw new PSNotSupportedException("Cannot determine message UID.");
+
+        // Only allow writing in Drafts folder
+        var folder = Drive.GetImapFolder(info.ImapFolderPath);
+        if (!folder.Attributes.HasFlag(FolderAttributes.Drafts))
+        {
+            bool isDrafts = false;
+            try
+            {
+                var drafts = Drive.Client.GetFolder(SpecialFolder.Drafts);
+                isDrafts = drafts != null && drafts.FullName == folder.FullName;
+            }
+            catch { }
+            if (!isDrafts)
+            {
+                var name = folder.Name.ToLowerInvariant();
+                isDrafts = name is "drafts" or "[gmail]/drafts";
+            }
+            if (!isDrafts)
+                throw new PSNotSupportedException("Set-Content is only supported for messages in the Drafts folder.");
+        }
+
+        return new MailContentWriter(Drive, folder, new UniqueId(uid), info.ImapFolderPath);
+    }
     public object? GetContentWriterDynamicParameters(string path) => null;
     public void ClearContent(string path)
         => throw new PSNotSupportedException("Clearing content is not supported.");
@@ -408,6 +508,20 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
     {
         var norm = NormalizePath(path);
         var info = ImapPathInfo.Parse(norm);
+
+        // Folder properties
+        if (info.Type == PathType.Folder)
+        {
+            var folder = Drive.TryGetImapFolder(info.ImapFolderPath);
+            if (folder == null) return;
+            var folderPso = new PSObject();
+            var folderPick = providerSpecificPickList?.Count > 0 ? providerSpecificPickList : null;
+            if (folderPick == null || folderPick.Contains("IsSubscribed"))
+                folderPso.Properties.Add(new PSNoteProperty("IsSubscribed", folder.IsSubscribed));
+            WritePropertyObject(folderPso, path);
+            return;
+        }
+
         if (info.Type != PathType.Message) return;
 
         var msg = FetchMessage(info);
@@ -417,6 +531,12 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         var pick = providerSpecificPickList?.Count > 0 ? providerSpecificPickList : null;
         if (pick == null || pick.Contains("IsRead"))
             pso.Properties.Add(new PSNoteProperty("IsRead", msg.IsRead));
+        if (pick == null || pick.Contains("IsFlagged"))
+            pso.Properties.Add(new PSNoteProperty("IsFlagged", msg.IsFlagged));
+        if (pick == null || pick.Contains("IsAnswered"))
+            pso.Properties.Add(new PSNoteProperty("IsAnswered", msg.IsAnswered));
+        if (pick == null || pick.Contains("IsDraft"))
+            pso.Properties.Add(new PSNoteProperty("IsDraft", msg.IsDraft));
         if (pick == null || pick.Contains("Subject"))
             pso.Properties.Add(new PSNoteProperty("Subject", msg.Subject));
         if (pick == null || pick.Contains("From"))
@@ -438,36 +558,103 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
     {
         var norm = NormalizePath(path);
         var info = ImapPathInfo.Parse(norm);
+
+        // Folder: IsSubscribed
+        if (info.Type == PathType.Folder)
+        {
+            var subProp = propertyValue.Properties["IsSubscribed"];
+            if (subProp == null) return;
+            bool subscribe = LanguagePrimitives.ConvertTo<bool>(subProp.Value);
+            if (!ShouldProcess(info.ImapFolderPath, subscribe ? "Subscribe" : "Unsubscribe")) return;
+
+            var subFolder = Drive.GetImapFolder(info.ImapFolderPath);
+            if (subscribe) subFolder.Subscribe();
+            else subFolder.Unsubscribe();
+            return;
+        }
+
         if (info.Type != PathType.Message) return;
 
         var uid = info.GetMessageUid();
         if (uid == null) return;
 
-        var isReadProp = propertyValue.Properties["IsRead"];
-        if (isReadProp == null) return;
-
-        bool isRead = System.Management.Automation.LanguagePrimitives.ConvertTo<bool>(isReadProp.Value);
-
-        if (!ShouldProcess($"UID {uid}", isRead ? "Mark as read" : "Mark as unread")) return;
+        var flagMap = new (string Name, MessageFlags Flag)[]
+        {
+            ("IsRead", MessageFlags.Seen),
+            ("IsFlagged", MessageFlags.Flagged),
+            ("IsAnswered", MessageFlags.Answered),
+            ("IsDraft", MessageFlags.Draft),
+        };
 
         var folder = Drive.GetImapFolder(info.ImapFolderPath);
-        OpenFolderIfNeeded(folder, FolderAccess.ReadWrite);
-        try
-        {
-            if (isRead)
-                folder.AddFlags(new UniqueId(uid.Value), MessageFlags.Seen, true);
-            else
-                folder.RemoveFlags(new UniqueId(uid.Value), MessageFlags.Seen, true);
-        }
-        finally { TryClose(folder); }
+        bool changed = false;
 
-        Drive.InvalidateMessages(info.ImapFolderPath);
+        foreach (var (name, flag) in flagMap)
+        {
+            var prop = propertyValue.Properties[name];
+            if (prop == null) continue;
+
+            bool value = LanguagePrimitives.ConvertTo<bool>(prop.Value);
+            if (!ShouldProcess($"UID {uid}", value ? $"Set {name}" : $"Clear {name}")) continue;
+
+            if (!changed)
+            {
+                OpenFolderIfNeeded(folder, FolderAccess.ReadWrite);
+                changed = true;
+            }
+
+            if (value)
+                folder.AddFlags(new UniqueId(uid.Value), flag, true);
+            else
+                folder.RemoveFlags(new UniqueId(uid.Value), flag, true);
+        }
+
+        if (changed)
+        {
+            TryClose(folder);
+            Drive.InvalidateMessages(info.ImapFolderPath);
+        }
     }
 
     public object? SetPropertyDynamicParameters(string path, PSObject propertyValue) => null;
 
     public void ClearProperty(string path, Collection<string> propertyToClear)
-        => throw new PSNotSupportedException("ClearProperty is not supported.");
+    {
+        var norm = NormalizePath(path);
+        var info = ImapPathInfo.Parse(norm);
+        if (info.Type != PathType.Message) return;
+
+        var uid = info.GetMessageUid();
+        if (uid == null) return;
+
+        var flagMap = new Dictionary<string, MessageFlags>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["IsRead"] = MessageFlags.Seen,
+            ["IsFlagged"] = MessageFlags.Flagged,
+            ["IsAnswered"] = MessageFlags.Answered,
+            ["IsDraft"] = MessageFlags.Draft,
+        };
+
+        MessageFlags toClear = MessageFlags.None;
+        foreach (var prop in propertyToClear)
+        {
+            if (flagMap.TryGetValue(prop, out var flag))
+                toClear |= flag;
+        }
+
+        if (toClear == MessageFlags.None) return;
+        if (!ShouldProcess($"UID {uid}", $"Clear flags: {toClear}")) return;
+
+        var folder = Drive.GetImapFolder(info.ImapFolderPath);
+        OpenFolderIfNeeded(folder, FolderAccess.ReadWrite);
+        try
+        {
+            folder.RemoveFlags(new UniqueId(uid.Value), toClear, true);
+        }
+        finally { TryClose(folder); }
+
+        Drive.InvalidateMessages(info.ImapFolderPath);
+    }
 
     public object? ClearPropertyDynamicParameters(string path, Collection<string> propertyToClear) => null;
 
@@ -487,6 +674,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         {
             foreach (var sub in parent.GetSubfolders(false))
             {
+                if (Stopping) return result;
                 var subNorm = string.IsNullOrEmpty(normalizedPath)
                     ? sub.Name : $"{normalizedPath}/{sub.Name}";
                 var fi = BuildFolderInfo(sub, EnsureDrivePrefix(subNorm));
@@ -527,6 +715,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 var parentPath = EnsureDrivePrefix(normalizedPath);
                 foreach (var summary in summaries.Reverse())
                 {
+                    if (Stopping) return result;
                     var msg = BuildMessageInfo(summary, parentPath);
                     msg.Directory = directory;
                     result.Add(msg);
@@ -565,12 +754,15 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 MessageSummaryItems.BodyStructure);
 
             var parentPath = EnsureDrivePrefix(normalizedPath);
-            return summaries.Select(s =>
+            var result = new List<MailMessageInfo>();
+            foreach (var s in summaries)
             {
+                if (Stopping) return [];
                 var msg = BuildMessageInfo(s, parentPath);
                 msg.Directory = directory;
-                return msg;
-            }).ToList();
+                result.Add(msg);
+            }
+            return result;
         }
         catch (Exception ex)
         {
@@ -609,6 +801,9 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                     "unread" => SearchQuery.NotSeen,
                     "read" => SearchQuery.Seen,
                     "flagged" => SearchQuery.Flagged,
+                    "answered" => SearchQuery.Answered,
+                    "draft" => SearchQuery.Draft,
+                    "has:attachment" => SearchQuery.HeaderContains("Content-Type", "multipart/mixed"),
                     _ => SearchQuery.SubjectContains(token),
                 };
             }
@@ -684,6 +879,9 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             To = MailHelpers.FormatAddress(envelope.To),
             Date = envelope.Date?.LocalDateTime ?? DateTime.MinValue,
             IsRead = summary.Flags?.HasFlag(MessageFlags.Seen) ?? false,
+            IsFlagged = summary.Flags?.HasFlag(MessageFlags.Flagged) ?? false,
+            IsAnswered = summary.Flags?.HasFlag(MessageFlags.Answered) ?? false,
+            IsDraft = summary.Flags?.HasFlag(MessageFlags.Draft) ?? false,
             HasAttachments = summary.Attachments?.Any() ?? false,
             Size = (int)(summary.Size ?? 0),
         };

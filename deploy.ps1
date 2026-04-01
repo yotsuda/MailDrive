@@ -45,8 +45,10 @@ $buildOutput = Join-Path $projectDir "src\MailDrive\bin\$Configuration\net9.0"
     'MailKit.dll'
     'MimeKit.dll'
     'BouncyCastle.Cryptography.dll'
+    'Microsoft.Identity.Client.dll'
 ) | ForEach-Object {
-    Copy-Item (Join-Path $buildOutput $_) $ModulePath
+    $src = Join-Path $buildOutput $_
+    if (Test-Path $src) { Copy-Item $src $ModulePath }
 }
 
 Write-Host "Deployed to $ModulePath" -ForegroundColor Green

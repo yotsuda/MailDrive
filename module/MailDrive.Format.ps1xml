@@ -49,6 +49,7 @@
           <TableColumnHeader><Label>From</Label><Width>25</Width></TableColumnHeader>
           <TableColumnHeader><Label>Subject</Label></TableColumnHeader>
           <TableColumnHeader><Label>Read</Label><Width>5</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Flag</Label><Width>5</Width></TableColumnHeader>
           <TableColumnHeader><Label>Size</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
@@ -62,6 +63,9 @@
               <TableColumnItem><PropertyName>Subject</PropertyName></TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>if ($_.IsRead) { "Y" } else { "" }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.IsFlagged) { "*" } else { "" }</ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>

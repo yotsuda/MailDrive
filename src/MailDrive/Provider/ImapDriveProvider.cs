@@ -160,7 +160,8 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 WriteItemObject(new { Root = "\\", Provider = "IMAP" }, path, true);
                 break;
             case PathType.Folder:
-                var folder = Drive.GetImapFolder(info.ImapFolderPath);
+                var folder = Drive.TryGetImapFolder(info.ImapFolderPath);
+                if (folder == null) return;
                 var fi = BuildFolderInfo(folder, path);
                 WriteItemObject(fi, path, true);
                 break;
@@ -275,6 +276,11 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                         {
                             folder.MoveTo(new UniqueId(uid.Value), trash);
                         }
+                        catch (Exception ex)
+                        {
+                            WriteError(new ErrorRecord(ex, "RemoveItemError", ErrorCategory.WriteError, path));
+                            return;
+                        }
                         finally { TryClose(folder); }
 
                         Drive.InvalidateMessages(info.ImapFolderPath);
@@ -298,13 +304,26 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 srcFolder.AddFlags(new UniqueId(uid.Value), MessageFlags.Deleted, true);
                 srcFolder.Expunge();
             }
+            catch (Exception ex)
+            {
+                WriteError(new ErrorRecord(ex, "RemoveItemError", ErrorCategory.WriteError, path));
+                return;
+            }
             finally { TryClose(srcFolder); }
             Drive.InvalidateMessages(info.ImapFolderPath);
         }
         else if (info.Type == PathType.Folder)
         {
             if (!ShouldProcess(info.ImapFolderPath, "Delete IMAP folder")) return;
-            Drive.GetImapFolder(info.ImapFolderPath).Delete();
+            try
+            {
+                Drive.GetImapFolder(info.ImapFolderPath).Delete();
+            }
+            catch (Exception ex)
+            {
+                WriteError(new ErrorRecord(ex, "RemoveItemError", ErrorCategory.WriteError, path));
+                return;
+            }
             int lastSlash = info.ImapFolderPath.LastIndexOf('/');
             Drive.InvalidateFolders(lastSlash < 0 ? "" : info.ImapFolderPath[..lastSlash]);
         }
@@ -334,7 +353,16 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             folderName = info.ImapFolderPath[(lastSlash + 1)..];
         }
 
-        var created = parent.Create(folderName, true);
+        IMailFolder created;
+        try
+        {
+            created = parent.Create(folderName, true);
+        }
+        catch (Exception ex)
+        {
+            WriteError(new ErrorRecord(ex, "NewItemError", ErrorCategory.WriteError, path));
+            return;
+        }
         var fi = BuildFolderInfo(created, path);
         WriteItemObject(fi, path, true);
         Drive.InvalidateFolders(lastSlash < 0 ? "" : info.ImapFolderPath[..lastSlash]);
@@ -384,6 +412,11 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         {
             srcFolder.MoveTo(new UniqueId(uid.Value), dstFolder);
         }
+        catch (Exception ex)
+        {
+            WriteError(new ErrorRecord(ex, "MoveItemError", ErrorCategory.WriteError, path));
+            return;
+        }
         finally { TryClose(srcFolder); }
 
         Drive.InvalidateMessages(srcInfo.ImapFolderPath);
@@ -412,6 +445,11 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         try
         {
             srcFolder.CopyTo(new UniqueId(uid.Value), dstFolder);
+        }
+        catch (Exception ex)
+        {
+            WriteError(new ErrorRecord(ex, "CopyItemError", ErrorCategory.WriteError, path));
+            return;
         }
         finally { TryClose(srcFolder); }
 

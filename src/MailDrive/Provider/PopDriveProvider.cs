@@ -197,7 +197,15 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
         if (idx == null) return;
         if (!ShouldProcess($"Message {idx.Value + 1}", "Delete message")) return;
 
-        Drive.Client.DeleteMessage(idx.Value);
+        try
+        {
+            Drive.Client.DeleteMessage(idx.Value);
+        }
+        catch (Exception ex)
+        {
+            WriteError(new ErrorRecord(ex, "RemoveItemError", ErrorCategory.WriteError, path));
+            return;
+        }
         Drive.InvalidateMessages();
         Drive.Reconnect();
     }

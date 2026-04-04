@@ -12,13 +12,15 @@
         'New-ImapDrive'
         'New-PopDrive'
         'Import-MailConfig'
-        'Edit-MailConfig'
+        'Open-MailConfig'
         'Send-Mail'
-        'Reply-Mail'
-        'Forward-Mail'
+        'Submit-MailReply'
+        'Submit-MailForward'
         'Export-MailAttachment'
+        'Export-MailMessage'
         'New-MailDraft'
         'Get-MailQuota'
+        'Get-MailConfigPath'
     )
 
     FunctionsToExport    = @()

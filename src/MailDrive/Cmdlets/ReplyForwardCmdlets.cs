@@ -6,7 +6,7 @@ using MimeKit;
 
 namespace MailDrive.Cmdlets;
 
-[Cmdlet("Reply", "Mail", SupportsShouldProcess = true)]
+[Cmdlet(VerbsLifecycle.Submit, "MailReply", SupportsShouldProcess = true)]
 public class ReplyMailCmdlet : PSCmdlet
 {
     [Parameter(Mandatory = true, ValueFromPipeline = true)]
@@ -26,7 +26,7 @@ public class ReplyMailCmdlet : PSCmdlet
 
     [Parameter]
     [Alias("Drive")]
-    public string? DriveName { get; set; }
+    public string? Path { get; set; }
 
     protected override void ProcessRecord()
     {
@@ -102,9 +102,9 @@ public class ReplyMailCmdlet : PSCmdlet
 
     private MailDriveInfoBase? ResolveSmtpDrive(MailDriveInfoBase messageDrive)
     {
-        if (!string.IsNullOrEmpty(DriveName))
+        if (!string.IsNullOrEmpty(Path))
         {
-            var d = SessionState.Drive.Get(DriveName);
+            var d = MailHelpers.ResolveDriveFromPath(Path, SessionState);
             return d is MailDriveInfoBase m && m.HasSmtp ? m : null;
         }
         return messageDrive.HasSmtp ? messageDrive : null;
@@ -128,7 +128,7 @@ public class ReplyMailCmdlet : PSCmdlet
     }
 }
 
-[Cmdlet("Forward", "Mail", SupportsShouldProcess = true)]
+[Cmdlet(VerbsLifecycle.Submit, "MailForward", SupportsShouldProcess = true)]
 public class ForwardMailCmdlet : PSCmdlet
 {
     [Parameter(Mandatory = true, ValueFromPipeline = true)]
@@ -148,7 +148,7 @@ public class ForwardMailCmdlet : PSCmdlet
 
     [Parameter]
     [Alias("Drive")]
-    public string? DriveName { get; set; }
+    public string? Path { get; set; }
 
     protected override void ProcessRecord()
     {
@@ -232,9 +232,9 @@ public class ForwardMailCmdlet : PSCmdlet
 
     private MailDriveInfoBase? ResolveSmtpDrive(MailDriveInfoBase messageDrive)
     {
-        if (!string.IsNullOrEmpty(DriveName))
+        if (!string.IsNullOrEmpty(Path))
         {
-            var d = SessionState.Drive.Get(DriveName);
+            var d = MailHelpers.ResolveDriveFromPath(Path, SessionState);
             return d is MailDriveInfoBase m && m.HasSmtp ? m : null;
         }
         return messageDrive.HasSmtp ? messageDrive : null;

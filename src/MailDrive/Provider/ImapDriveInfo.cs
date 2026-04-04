@@ -18,7 +18,7 @@ public class ImapDriveInfo : MailDriveInfoBase
 
     private readonly ConcurrentDictionary<string, (List<MailFolderInfo> Items, DateTime Expiry)> _folderCache = new();
     private readonly ConcurrentDictionary<string, (List<MailMessageInfo> Items, DateTime Expiry)> _messageCache = new();
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
     public ImapDriveInfo(PSDriveInfo driveInfo, string host, int port, SecureSocketOptions ssl,
         string username, string password,
@@ -36,31 +36,36 @@ public class ImapDriveInfo : MailDriveInfoBase
     {
         get
         {
-            if (_client == null || !_client.IsConnected)
+            if (_client == null || !_client.IsConnected || !_client.IsAuthenticated)
             {
-                lock (_clientLock)
-                {
-                    if (_client == null || !_client.IsConnected)
-                    {
-                        _client?.Dispose();
-                        _client = new ImapClient();
-                        _client.Connect(_host, _port, _ssl);
-                        if (UseOAuth2)
-                        {
-                            var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId);
-                            _client.Authenticate(new MailKit.Security.SaslMechanismOAuth2(MailUsername, token));
-                        }
-                        else
-                        {
-                            _client.Authenticate(MailUsername, MailPassword);
-                        }
-                        _directorySeparator = null;
-                    }
-                }
+                Reconnect();
             }
-            return _client;
+            return _client!;
         }
     }
+
+    public void Reconnect()
+    {
+        lock (_clientLock)
+        {
+            _client?.Dispose();
+            _client = new ImapClient();
+            _client.Connect(_host, _port, _ssl);
+            if (UseOAuth2)
+            {
+                var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId);
+                _client.Authenticate(new MailKit.Security.SaslMechanismOAuth2(MailUsername, token));
+            }
+            else
+            {
+                _client.Authenticate(MailUsername, MailPassword);
+            }
+            _directorySeparator = null;
+        }
+    }
+
+    public bool IsGMail => Client.Capabilities.HasFlag(
+        MailKit.Net.Imap.ImapCapabilities.GMailExt1);
 
     public char DirectorySeparator =>
         _directorySeparator ??= Client.GetFolder(Client.PersonalNamespaces[0]).DirectorySeparator;
@@ -110,6 +115,12 @@ public class ImapDriveInfo : MailDriveInfoBase
 
     public void InvalidateMessages(string key)
         => _messageCache.TryRemove(key, out _);
+
+    public void InvalidateAll()
+    {
+        _folderCache.Clear();
+        _messageCache.Clear();
+    }
 
     // ── Special folders ──────────────────────────────────────────
 

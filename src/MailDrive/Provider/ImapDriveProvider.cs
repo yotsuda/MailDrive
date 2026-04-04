@@ -61,7 +61,18 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         try
         {
             var configPath = MailConfig.DefaultPath;
-            if (!File.Exists(configPath)) return drives;
+            if (!File.Exists(configPath))
+            {
+                MailConfig.EnsureDefaultConfig(configPath);
+
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo("notepad.exe", configPath)
+                    { UseShellExecute = true });
+
+                WriteWarning($"Created default config: {configPath}");
+                WriteWarning("Please edit the config file. After saving, run Import-MailConfig to load your drives.");
+                return drives;
+            }
             MailConfig.ConfigLastWriteTimeUtc = File.GetLastWriteTimeUtc(configPath);
 
             var config = MailConfig.Load(configPath);
@@ -87,7 +98,10 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 drives.Add(driveInfo);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            WriteWarning($"Failed to load config '{MailConfig.DefaultPath}': {ex.Message}");
+        }
         return drives;
     }
 
@@ -120,10 +134,21 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             case PathType.Root:
                 return true;
             case PathType.Folder:
+                // Check folder cache first
+                var parentPath = info.ImapFolderPath.Contains('/')
+                    ? info.ImapFolderPath[..info.ImapFolderPath.LastIndexOf('/')]
+                    : "";
+                var cachedFolders = Drive.GetCachedFolders(parentPath);
+                if (cachedFolders != null)
+                    return cachedFolders.Any(f => f.FullName == info.ImapFolderPath.Replace('/', Drive.DirectorySeparator));
                 return Drive.TryGetImapFolder(info.ImapFolderPath) != null;
             case PathType.Message:
                 var uid = info.GetMessageUid();
                 if (uid == null) return false;
+                // Check message cache first — avoids IMAP round-trip per message
+                var cachedMessages = Drive.GetCachedMessages(info.ImapFolderPath);
+                if (cachedMessages != null)
+                    return cachedMessages.Any(m => m.Uid == uid.Value);
                 var folder = Drive.TryGetImapFolder(info.ImapFolderPath);
                 if (folder == null) return false;
                 try
@@ -180,12 +205,18 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         var norm = NormalizePath(path);
         var info = ImapPathInfo.Parse(norm);
         var paging = DynamicParameters as MailPaginationParameters;
-        int first = paging?.First ?? 50;
+        int first = paging?.First ?? 20;
         if (info.Type == PathType.Message) return;
 
         var directory = EnsureDrivePrefix(path);
 
-        var subfolders = GetCachedSubfolders(norm, directory);
+        if (Force)
+        {
+            Drive.InvalidateFolders(norm);
+            Drive.InvalidateMessages(norm);
+        }
+
+        var subfolders = GetCachedSubfolders(norm, directory, skipStatus: true);
         List<string>? containers = recurse ? new() : null;
         foreach (var fi in subfolders)
         {
@@ -228,20 +259,45 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
         var directory = EnsureDrivePrefix(path);
 
-        var subfolders = GetCachedSubfolders(norm, directory);
-        foreach (var fi in subfolders)
+        // Use cache if available; otherwise just list folder names (skip STATUS for speed)
+        var cached = Drive.GetCachedFolders(norm);
+        if (cached != null)
         {
-            if (Stopping) return;
-            WriteItemObject(fi.Name, MakePath(path, fi.Name), true);
+            foreach (var fi in cached)
+            {
+                if (Stopping) return;
+                WriteItemObject(fi.Name, MakePath(path, fi.Name), true);
+            }
+        }
+        else
+        {
+            try
+            {
+                IMailFolder parent = string.IsNullOrEmpty(norm)
+                    ? Drive.Client.GetFolder(Drive.Client.PersonalNamespaces[0])
+                    : Drive.GetImapFolder(norm);
+                foreach (var sub in parent.GetSubfolders(false))
+                {
+                    if (Stopping) return;
+                    WriteItemObject(sub.Name, MakePath(path, sub.Name), true);
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteWarning($"GetSubfolders failed for '{norm}': {ex.Message}");
+            }
         }
 
         if (info.Type != PathType.Root)
         {
-            var messages = GetCachedMessages(norm, directory, 50);
-            foreach (var msg in messages)
+            var messages = Drive.GetCachedMessages(norm);
+            if (messages != null)
             {
-                if (Stopping) return;
-                WriteItemObject(msg.FileName, MakePath(path, msg.FileName), false);
+                foreach (var msg in messages)
+                {
+                    if (Stopping) return;
+                    WriteItemObject(msg.FileName, MakePath(path, msg.FileName), false);
+                }
             }
         }
     }
@@ -363,9 +419,11 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             WriteError(new ErrorRecord(ex, "NewItemError", ErrorCategory.WriteError, path));
             return;
         }
+        var parentDir = lastSlash < 0 ? "" : info.ImapFolderPath[..lastSlash];
         var fi = BuildFolderInfo(created, path);
+        fi.Directory = EnsureDrivePrefix(parentDir);
         WriteItemObject(fi, path, true);
-        Drive.InvalidateFolders(lastSlash < 0 ? "" : info.ImapFolderPath[..lastSlash]);
+        Drive.InvalidateFolders(parentDir);
     }
 
     // ── RenameItem ───────────────────────────────────────────────
@@ -698,7 +756,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
     // ── Cache helpers ───────────────────────────────────────────
 
-    private List<MailFolderInfo> GetCachedSubfolders(string normalizedPath, string directory)
+    private List<MailFolderInfo> GetCachedSubfolders(string normalizedPath, string directory, bool skipStatus = false)
     {
         var cached = Drive.GetCachedFolders(normalizedPath);
         if (cached != null) return cached;
@@ -708,24 +766,36 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             : Drive.GetImapFolder(normalizedPath);
 
         var result = new List<MailFolderInfo>();
-        try
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            foreach (var sub in parent.GetSubfolders(false))
+            try
             {
-                if (Stopping) return result;
-                var subNorm = string.IsNullOrEmpty(normalizedPath)
-                    ? sub.Name : $"{normalizedPath}/{sub.Name}";
-                var fi = BuildFolderInfo(sub, EnsureDrivePrefix(subNorm));
-                fi.Directory = directory;
-                result.Add(fi);
+                if (attempt > 0)
+                {
+                    Drive.Reconnect();
+                    parent = string.IsNullOrEmpty(normalizedPath)
+                        ? Drive.Client.GetFolder(Drive.Client.PersonalNamespaces[0])
+                        : Drive.GetImapFolder(normalizedPath);
+                }
+                foreach (var sub in parent.GetSubfolders(false))
+                {
+                    if (Stopping) return result;
+                    var subNorm = string.IsNullOrEmpty(normalizedPath)
+                        ? sub.Name : $"{normalizedPath}/{sub.Name}";
+                    var fi = BuildFolderInfo(sub, EnsureDrivePrefix(subNorm), skipStatus);
+                    fi.Directory = directory;
+                    result.Add(fi);
+                }
+                Drive.SetCachedFolders(normalizedPath, result);
+                break;
+            }
+            catch when (attempt == 0) { result.Clear(); }
+            catch (Exception ex)
+            {
+                WriteWarning($"GetSubfolders failed for '{normalizedPath}': {ex.Message}");
             }
         }
-        catch (Exception ex)
-        {
-            WriteVerbose($"GetSubfolders failed for '{normalizedPath}': {ex.Message}");
-        }
 
-        Drive.SetCachedFolders(normalizedPath, result);
         return result;
     }
 
@@ -747,8 +817,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 int start = Math.Max(0, count - first);
                 var summaries = folder.Fetch(start, -1,
                     MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
-                    MessageSummaryItems.Flags | MessageSummaryItems.Size |
-                    MessageSummaryItems.BodyStructure);
+                    MessageSummaryItems.Flags | MessageSummaryItems.Size);
 
                 var parentPath = EnsureDrivePrefix(normalizedPath);
                 foreach (var summary in summaries.Reverse())
@@ -759,14 +828,14 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                     result.Add(msg);
                 }
             }
+            Drive.SetCachedMessages(normalizedPath, result);
         }
         catch (Exception ex)
         {
-            WriteVerbose($"Fetch messages failed for '{normalizedPath}': {ex.Message}");
+            WriteWarning($"Fetch messages failed for '{normalizedPath}': {ex.Message}");
         }
         finally { TryClose(folder); }
 
-        Drive.SetCachedMessages(normalizedPath, result);
         return result;
     }
 
@@ -781,15 +850,17 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         OpenFolderIfNeeded(folder, FolderAccess.ReadOnly);
         try
         {
-            var query = ParseSearch(search);
+            // Gmail: use X-GM-RAW for native Gmail search syntax
+            var query = Drive.IsGMail
+                ? SearchQuery.GMailRawSearch(search)
+                : ParseSearch(search);
             var uids = folder.Search(query);
             var targetUids = uids.Reverse().Take(first).ToList();
             if (targetUids.Count == 0) return [];
 
             var summaries = folder.Fetch(targetUids,
                 MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
-                MessageSummaryItems.Flags | MessageSummaryItems.Size |
-                MessageSummaryItems.BodyStructure);
+                MessageSummaryItems.Flags | MessageSummaryItems.Size);
 
             var parentPath = EnsureDrivePrefix(normalizedPath);
             var result = new List<MailMessageInfo>();
@@ -868,9 +939,9 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         try { if (folder.IsOpen) folder.Close(false); } catch { }
     }
 
-    private MailFolderInfo BuildFolderInfo(IMailFolder folder, string path)
+    private MailFolderInfo BuildFolderInfo(IMailFolder folder, string path, bool skipStatus = false)
     {
-        var status = GetFolderStatus(folder);
+        var status = skipStatus ? (count: 0, unread: 0) : GetFolderStatus(folder);
         return new MailFolderInfo
         {
             Path = EnsureDrivePrefix(path),

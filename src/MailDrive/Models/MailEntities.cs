@@ -2,10 +2,16 @@ using System.Text.Json.Serialization;
 
 namespace MailDrive.Models;
 
-public class MailFolderInfo
+public abstract class MailItemBase
 {
     [JsonIgnore] public string Path { get; set; } = "";
     [JsonIgnore] public string Directory { get; set; } = "";
+    public abstract bool IsContainer { get; }
+}
+
+public class MailFolderInfo : MailItemBase
+{
+    public override bool IsContainer => true;
 
     public string Name { get; set; } = "";
     public string FullName { get; set; } = "";
@@ -15,10 +21,9 @@ public class MailFolderInfo
     public string Attributes { get; set; } = "";
 }
 
-public class MailMessageInfo
+public class MailMessageInfo : MailItemBase
 {
-    [JsonIgnore] public string Path { get; set; } = "";
-    [JsonIgnore] public string Directory { get; set; } = "";
+    public override bool IsContainer => false;
 
     public uint Uid { get; set; }
     public string FileName { get; set; } = "";

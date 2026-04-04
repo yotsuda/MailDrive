@@ -52,6 +52,7 @@ public class MailConfig : MailSettings
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
     };
 
     /// <summary>Last write time recorded when config was loaded by InitializeDefaultDrives.</summary>

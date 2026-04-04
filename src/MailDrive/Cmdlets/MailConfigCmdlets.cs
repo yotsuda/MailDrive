@@ -35,6 +35,15 @@ public class ImportMailConfigCmdlet : PSCmdlet
             }
         }
 
+        // Move away from mail drive before removing/recreating drives
+        try
+        {
+            var providerName = SessionState.Path.CurrentLocation.Provider.Name;
+            if (providerName is "Imap" or "Pop")
+                SessionState.Path.SetLocation("C:");
+        }
+        catch { }
+
         var config = MailConfig.Load(configPath);
         if (config?.PSDrives == null || config.PSDrives.Count == 0)
         {
@@ -104,7 +113,17 @@ public class ImportMailConfigCmdlet : PSCmdlet
     }
 }
 
-[Cmdlet("Edit", "MailConfig")]
+[Cmdlet(VerbsCommon.Get, "MailConfigPath")]
+[OutputType(typeof(string))]
+public class GetMailConfigPathCmdlet : PSCmdlet
+{
+    protected override void ProcessRecord()
+    {
+        WriteObject(MailConfig.DefaultPath);
+    }
+}
+
+[Cmdlet(VerbsCommon.Open, "MailConfig")]
 [OutputType(typeof(string))]
 public class EditMailConfigCmdlet : PSCmdlet
 {

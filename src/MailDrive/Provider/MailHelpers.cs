@@ -63,6 +63,20 @@ public static class MailHelpers
     }
 
     /// <summary>
+    /// Resolve a PS path (e.g. "GM:", "GM:\INBOX", ".") to its PSDriveInfo.
+    /// </summary>
+    internal static PSDriveInfo? ResolveDriveFromPath(string path, SessionState sessionState)
+    {
+        try
+        {
+            sessionState.Path.GetUnresolvedProviderPathFromPSPath(
+                path, out _, out PSDriveInfo drive);
+            return drive;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
     /// Fetch the full MimeMessage for a MailMessageInfo by resolving its drive and UID.
     /// </summary>
     internal static (MailDriveInfoBase Drive, MimeMessage Message)? FetchFullMessage(

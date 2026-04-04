@@ -90,7 +90,10 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
                     s.IsOAuth2, s.TenantId, s.ClientId));
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            WriteWarning($"Failed to load config '{MailConfig.DefaultPath}': {ex.Message}");
+        }
         return drives;
     }
 
@@ -156,8 +159,10 @@ public class PopDriveProvider : NavigationCmdletProvider, IContentCmdletProvider
         if (IsMessagePath(norm)) return;
 
         var paging = DynamicParameters as MailPaginationParameters;
-        int first = paging?.First ?? 50;
+        int first = paging?.First ?? 20;
         var directory = EnsureDrivePrefix(path);
+
+        if (Force) Drive.InvalidateMessages();
 
         var messages = GetCachedMessages(directory, first);
         foreach (var msg in messages)

@@ -10,7 +10,7 @@ public class GetMailQuotaCmdlet : PSCmdlet
 {
     [Parameter(Position = 0)]
     [Alias("Drive")]
-    public string? DriveName { get; set; }
+    public string? Path { get; set; }
 
     protected override void ProcessRecord()
     {
@@ -64,26 +64,6 @@ public class GetMailQuotaCmdlet : PSCmdlet
 
     private ImapDriveInfo? FindImapDrive()
     {
-        if (!string.IsNullOrEmpty(DriveName))
-        {
-            var d = SessionState.Drive.Get(DriveName);
-            return d as ImapDriveInfo;
-        }
-
-        try
-        {
-            if (SessionState.Path.CurrentLocation.Drive is ImapDriveInfo current)
-                return current;
-        }
-        catch { }
-
-        try
-        {
-            foreach (var d in SessionState.Drive.GetAllForProvider("Imap"))
-                if (d is ImapDriveInfo imap) return imap;
-        }
-        catch { }
-
-        return null;
+        return MailHelpers.ResolveDriveFromPath(Path ?? ".", SessionState) as ImapDriveInfo;
     }
 }

@@ -35,7 +35,7 @@ public class SendMailCmdlet : PSCmdlet
 
     [Parameter(HelpMessage = "Name of the PSDrive to use for SMTP settings.")]
     [Alias("Drive")]
-    public string? DriveName { get; set; }
+    public string? Path { get; set; }
 
     protected override void ProcessRecord()
     {
@@ -81,37 +81,20 @@ public class SendMailCmdlet : PSCmdlet
         smtp.Send(message);
         smtp.Disconnect(true);
 
+        // Notify IMAP server and invalidate cache so new messages appear in dir
+        if (drive is ImapDriveInfo imap)
+        {
+            imap.Client.NoOp();
+            imap.InvalidateAll();
+        }
+
         WriteVerbose($"Sent to {target}");
     }
 
     private MailDriveInfoBase? FindSmtpDrive()
     {
-        if (!string.IsNullOrEmpty(DriveName))
-        {
-            var d = SessionState.Drive.Get(DriveName);
-            if (d is MailDriveInfoBase m && m.HasSmtp) return m;
-            return null;
-        }
-
-        // Current drive
-        try
-        {
-            if (SessionState.Path.CurrentLocation.Drive is MailDriveInfoBase current && current.HasSmtp)
-                return current;
-        }
-        catch { }
-
-        // Search all mail drives
-        foreach (var provider in new[] { "Imap", "Pop" })
-        {
-            try
-            {
-                foreach (var d in SessionState.Drive.GetAllForProvider(provider))
-                    if (d is MailDriveInfoBase m && m.HasSmtp) return m;
-            }
-            catch { }
-        }
-
+        var resolved = MailHelpers.ResolveDriveFromPath(Path ?? ".", SessionState);
+        if (resolved is MailDriveInfoBase m && m.HasSmtp) return m;
         return null;
     }
 }

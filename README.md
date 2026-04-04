@@ -1,6 +1,6 @@
 # MailDrive
 
-PowerShell NavigationCmdletProvider for IMAP / POP3 mailboxes.
+PowerShell NavigationCmdletProvider for IMAP / POP3 / SMTP.
 Navigate your mailbox like a filesystem using `cd`, `dir`, `cat`, `mv`, `del` and other familiar commands.
 
 ## Features

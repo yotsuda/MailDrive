@@ -27,7 +27,7 @@ Import-Module platyPS
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $helpRoot = Join-Path $repoRoot 'docs\help'
-$baseUrl  = 'https://github.com/yotsuda/MailDrive/blob/main/docs/help'
+$baseUrl  = 'https://github.com/yotsuda/MailDrive/blob/master/docs/help'
 
 # Always import a fresh copy of the staged module so cmdlet metadata is current.
 Remove-Module MailDrive -Force -ErrorAction SilentlyContinue

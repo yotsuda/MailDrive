@@ -30,12 +30,12 @@
 
     FormatsToProcess     = @('MailDrive.Format.ps1xml')
 
-    HelpInfoURI          = 'https://github.com/yotsuda/MailDrive/blob/main/docs/help/'
+    HelpInfoURI          = 'https://github.com/yotsuda/MailDrive/blob/master/docs/help/'
 
     PrivateData = @{
         PSData = @{
             Tags         = @('IMAP', 'POP3', 'SMTP', 'Email', 'Provider', 'PSDrive', 'MailKit', 'OAuth2', 'Gmail', 'Outlook')
-            LicenseUri   = 'https://github.com/yotsuda/MailDrive/blob/main/LICENSE'
+            LicenseUri   = 'https://github.com/yotsuda/MailDrive/blob/master/LICENSE'
             ProjectUri   = 'https://github.com/yotsuda/MailDrive'
             ReleaseNotes = @'
 0.3.0 -- first PowerShell Gallery release

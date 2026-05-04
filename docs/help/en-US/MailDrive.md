@@ -1,7 +1,7 @@
 ---
 Module Name: MailDrive
 Module Guid: f3a1b2c4-5d6e-7f89-0abc-def123456789
-Download Help Link: https://github.com/yotsuda/MailDrive/blob/main/docs/help/en-US/MailDrive.md
+Download Help Link: https://github.com/yotsuda/MailDrive/blob/master/docs/help/en-US/MailDrive.md
 Help Version: 0.3.0
 Locale: en-US
 ---

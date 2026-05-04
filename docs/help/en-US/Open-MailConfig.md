@@ -1,7 +1,7 @@
 ---
 external help file: MailDrive.dll-Help.xml
 Module Name: MailDrive
-online version: https://github.com/yotsuda/MailDrive/blob/main/docs/help/en-US/Open-MailConfig.md
+online version: https://github.com/yotsuda/MailDrive/blob/master/docs/help/en-US/Open-MailConfig.md
 schema: 2.0.0
 ---
 

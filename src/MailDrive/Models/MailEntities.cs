@@ -43,18 +43,3 @@ public class MailMessageInfo : MailItemBase
     public string[]? References { get; set; }
     public ulong? ThreadId { get; set; }
 }
-
-public class MailThreadInfo : MailItemBase
-{
-    public override bool IsContainer => true;
-
-    public ulong ThreadId { get; set; }
-    public string Name { get; set; } = "";
-    public string Subject { get; set; } = "";
-    public string Participants { get; set; } = "";
-    public int MessageCount { get; set; }
-    public DateTime LatestDate { get; set; }
-    public bool HasUnread { get; set; }
-    public bool HasAttachments { get; set; }
-    public bool HasFlagged { get; set; }
-}

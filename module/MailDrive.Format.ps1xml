@@ -7,7 +7,6 @@
       <ViewSelectedBy>
         <TypeName>MailDrive.Models.MailFolderInfo</TypeName>
         <TypeName>MailDrive.Models.MailMessageInfo</TypeName>
-        <TypeName>MailDrive.Models.MailThreadInfo</TypeName>
       </ViewSelectedBy>
       <GroupBy>
         <PropertyName>Directory</PropertyName>
@@ -25,15 +24,12 @@
             <TableColumnItems>
               <TableColumnItem>
                 <ScriptBlock>
-                  $esc = [char]0x1b
-                  $reset = "${esc}[0m"
                   if ($_ -is [MailDrive.Models.MailFolderInfo]) {
+                    $esc = [char]0x1b
                     $blue = "${esc}[34;1m"
+                    $reset = "${esc}[0m"
                     $info = if ($_.MessageCount -gt 0) { " ($($_.MessageCount)/$($_.UnreadCount))" } else { "" }
                     "${blue}$($_.Name)/${reset}${info}"
-                  } elseif ($_ -is [MailDrive.Models.MailThreadInfo]) {
-                    $cyan = "${esc}[36;1m"
-                    "${cyan}$($_.Name)/${reset}"
                   } else {
                     $_.FileName
                   }
@@ -41,28 +37,17 @@
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
-                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { "{0:MM/dd HH:mm}" -f $_.Date }
-                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { "{0:MM/dd HH:mm}" -f $_.LatestDate }
-                  else { "" }
+                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { "{0:MM/dd HH:mm}" -f $_.Date } else { "" }
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
-                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { $_.From }
-                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { $_.Participants }
-                  else { "" }
+                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { $_.From } else { "" }
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
                   if ($_ -is [MailDrive.Models.MailFolderInfo]) { $_.Attributes }
-                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) {
-                    $marks = ''
-                    if ($_.HasUnread)      { $marks += '*' }
-                    if ($_.HasFlagged)     { $marks += '!' }
-                    if ($_.HasAttachments) { $marks += '@' }
-                    if ($marks) { "$marks $($_.Subject)" } else { $_.Subject }
-                  }
                   else { $_.Subject }
                 </ScriptBlock>
               </TableColumnItem>
@@ -72,8 +57,7 @@
                     if ($_.Size -ge 1MB) { "{0:N1}M" -f ($_.Size / 1MB) }
                     elseif ($_.Size -ge 1KB) { "{0:N0}K" -f ($_.Size / 1KB) }
                     else { $_.Size }
-                  } elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { "$($_.MessageCount)" }
-                  else { "" }
+                  } else { "" }
                 </ScriptBlock>
               </TableColumnItem>
             </TableColumnItems>

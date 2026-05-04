@@ -50,7 +50,7 @@
 - Drafts via New-MailDraft
 - Quota query via Get-MailQuota
 - Connection inspection via Get-MailDrive (shows Username / Host / Port / Ssl / Auth / SMTP / connection state)
-- Conversation threads as virtual sub-folder ("dir Gmail:\INBOX\Threads" lists thread containers; descend to see messages grouped by Gmail X-GM-THRID)
+- Conversation threading: cd into a multi-message .eml acts as a container and dir lists every member of the thread chronologically (Gmail X-GM-THRID; falls back to References/In-Reply-To linking on other servers). Singleton-thread messages remain leaves.
 - MailMessageInfo now exposes MessageId / InReplyTo / References / ThreadId for cross-thread reasoning
 - HasAttachments now correctly reflects MIME structure (was always False before)
 - Config-file-based drive auto-mount (Import-MailConfig)

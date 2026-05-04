@@ -159,26 +159,23 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 }
                 catch { return false; }
                 finally { TryClose(folder); }
-            case PathType.ThreadsContainer:
-                // Virtual folder under any real IMAP folder.
-                return Drive.TryGetImapFolder(info.ImapFolderPath) != null;
-            case PathType.Thread:
-                // Exists if at least one cached message has this ThreadId.
-                if (info.ThreadId == null) return false;
-                var cached = Drive.GetCachedMessages(info.ImapFolderPath);
-                return cached?.Any(m => MatchesThread(m, info.ThreadId)) ?? false;
         }
         return false;
     }
 
+    // A message acts as a container only when it is a multi-message thread
+    // ROOT (the path is plain, not nested inside another .eml). Singleton
+    // threads stay as leaves — cd would go nowhere useful.
     protected override bool IsItemContainer(string path)
-        => ImapPathInfo.Parse(NormalizePath(path)).IsContainer;
-
-    protected override bool HasChildItems(string path)
     {
         var info = ImapPathInfo.Parse(NormalizePath(path));
-        return info.IsContainer;
+        if (info.Type != PathType.Message) return info.IsContainer;
+        if (info.IsInThreadContext) return false;
+        return GetThreadMembers(info).Count > 1;
     }
+
+    protected override bool HasChildItems(string path)
+        => IsItemContainer(path);
 
     // ── GetItem ─────────────────────────────────────────────────
 
@@ -202,44 +199,12 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 var msg = FetchMessage(info);
                 if (msg != null)
                 {
-                    if (info.ThreadId.HasValue)
+                    if (info.IsInThreadContext)
                     {
                         msg.Path = path;
                         msg.Directory = path[..path.LastIndexOf('\\')];
                     }
                     WriteItemObject(msg, path, false);
-                }
-                break;
-            case PathType.ThreadsContainer:
-                WriteItemObject(new MailFolderInfo
-                {
-                    Path = path,
-                    Name = ImapPathInfo.ThreadsSegment,
-                    FullName = ImapPathInfo.ThreadsSegment,
-                    Attributes = "Virtual",
-                    SubfolderCount = 1,
-                }, path, true);
-                break;
-            case PathType.Thread:
-                if (info.ThreadId.HasValue)
-                {
-                    var threadMsgs = GetThreadMessages(info, EnsureDrivePrefix(path), 100);
-                    if (threadMsgs.Count > 0)
-                    {
-                        var latest = threadMsgs.MaxBy(m => m.Date) ?? threadMsgs[0];
-                        WriteItemObject(new MailThreadInfo
-                        {
-                            Path = path,
-                            ThreadId = info.ThreadId.Value,
-                            Name = info.ThreadSegment ?? "",
-                            Subject = latest.Subject,
-                            MessageCount = threadMsgs.Count,
-                            LatestDate = latest.Date,
-                            HasUnread = threadMsgs.Any(m => !m.IsRead),
-                            HasAttachments = threadMsgs.Any(m => m.HasAttachments),
-                            HasFlagged = threadMsgs.Any(m => m.IsFlagged),
-                        }, path, true);
-                    }
                 }
                 break;
         }
@@ -253,7 +218,6 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         var info = ImapPathInfo.Parse(norm);
         var paging = DynamicParameters as MailPaginationParameters;
         int first = paging?.First ?? 20;
-        if (info.Type == PathType.Message) return;
 
         var directory = EnsureDrivePrefix(path);
 
@@ -263,25 +227,18 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             Drive.InvalidateMessages(info.ImapFolderPath);
         }
 
-        // Threads/ virtual folder — list MailThreadInfo grouped from cached messages.
-        if (info.Type == PathType.ThreadsContainer)
+        // Message-as-container: cd into a thread root, dir lists thread members.
+        // Thread-context paths are leaves to break recursion.
+        if (info.Type == PathType.Message)
         {
-            var threads = BuildThreads(info.ImapFolderPath, directory, first);
-            foreach (var t in threads)
+            if (info.IsInThreadContext) return;
+            var members = GetThreadMembers(info);
+            if (members.Count <= 1) return;
+            foreach (var m in members.OrderBy(m => m.Date))
             {
                 if (Stopping) return;
-                WriteItemObject(t, t.Path, true);
-            }
-            return;
-        }
-
-        // Inside a specific thread — list its messages with rebased path.
-        if (info.Type == PathType.Thread)
-        {
-            var msgs = GetThreadMessages(info, directory, first);
-            foreach (var m in msgs)
-            {
-                if (Stopping) return;
+                m.Directory = directory;
+                m.Path = EnsureDrivePrefix(MakePath(path, m.FileName));
                 WriteItemObject(m, m.Path, false);
             }
             return;
@@ -294,23 +251,6 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             if (Stopping) return;
             WriteItemObject(fi, fi.Path, true);
             if (recurse) containers!.Add(fi.Path);
-        }
-
-        if (info.Type == PathType.Folder)
-        {
-            // Inject the Threads/ virtual subfolder at the top of the message list.
-            var threadsPath = EnsureDrivePrefix(MakePath(path, ImapPathInfo.ThreadsSegment));
-            var threadsFolder = new MailFolderInfo
-            {
-                Path = threadsPath,
-                Name = ImapPathInfo.ThreadsSegment,
-                FullName = ImapPathInfo.ThreadsSegment,
-                Attributes = "Virtual",
-                SubfolderCount = 1,
-                Directory = directory,
-            };
-            WriteItemObject(threadsFolder, threadsPath, true);
-            if (recurse) containers!.Add(threadsPath);
         }
 
         if (info.Type != PathType.Root)
@@ -1027,85 +967,37 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         try { if (folder.IsOpen) folder.Close(false); } catch { }
     }
 
-    // ── Threads (virtual folder over messages grouped by ThreadId) ───────
-
-    private List<MailThreadInfo> BuildThreads(string imapFolderPath, string directory, int first)
+    // Look up the thread members of `info` (the message identified by its
+    // path). Returns a fresh list — caller may rebase Path/Directory.
+    // Empty list = message not found in cache; 1 = singleton; >1 = multi.
+    private List<MailMessageInfo> GetThreadMembers(ImapPathInfo info)
     {
-        // Source from cached message listing — Gmail X-GM-THRID is included in
-        // the standard fetch when IsGmail. For non-Gmail without thread support
-        // ThreadId will be null and each message becomes its own singleton thread.
-        var msgs = GetCachedMessages(imapFolderPath, directory, first);
-        var folderDirPath = EnsureDrivePrefix(imapFolderPath);
-        var threadsBase = MakePath(folderDirPath, ImapPathInfo.ThreadsSegment);
+        var uid = info.GetMessageUid();
+        var cache = Drive.GetCachedMessages(info.ImapFolderPath);
+        if (uid == null || cache == null) return new();
 
-        // Group by ThreadId, fall back to MessageId for messages without ThreadId.
-        var groups = msgs.GroupBy(m => m.ThreadId ?? FallbackThreadKey(m));
-        var result = new List<MailThreadInfo>();
-        foreach (var g in groups)
-        {
-            ulong threadId = g.Key;
-            var members = g.ToList();
-            var latest = members.MaxBy(m => m.Date) ?? members[0];
-            var seg = ImapPathInfo.BuildThreadSegment(threadId, latest.Subject);
-            var path = EnsureDrivePrefix(MakePath(threadsBase, seg));
-            var participants = string.Join(", ", members
-                .SelectMany(m => new[] { m.From }).Where(s => !string.IsNullOrEmpty(s))
-                .Distinct().Take(3));
-            result.Add(new MailThreadInfo
-            {
-                Path = path,
-                Directory = threadsBase,
-                ThreadId = threadId,
-                Name = seg,
-                Subject = latest.Subject,
-                Participants = participants,
-                MessageCount = members.Count,
-                LatestDate = latest.Date,
-                HasUnread = members.Any(m => !m.IsRead),
-                HasAttachments = members.Any(m => m.HasAttachments),
-                HasFlagged = members.Any(m => m.IsFlagged),
-            });
-        }
-        return result.OrderByDescending(t => t.LatestDate).ToList();
-    }
+        var self = cache.FirstOrDefault(m => m.Uid == uid.Value);
+        if (self == null) return new();
 
-    private List<MailMessageInfo> GetThreadMessages(ImapPathInfo info, string directory, int first)
-    {
-        var folderDirPath = EnsureDrivePrefix(info.ImapFolderPath);
-        var threadDirPath = EnsureDrivePrefix(
-            MakePath(MakePath(folderDirPath, ImapPathInfo.ThreadsSegment), info.ThreadSegment ?? ""));
-        var msgs = GetCachedMessages(info.ImapFolderPath, directory, first);
-        var members = msgs.Where(m => MatchesThread(m, info.ThreadId)).ToList();
-        // Rebase paths so cat/mv/del work via the thread-qualified path.
-        foreach (var m in members)
-        {
-            m.Directory = threadDirPath;
-            m.Path = EnsureDrivePrefix(MakePath(threadDirPath, m.FileName));
-        }
-        return members.OrderBy(m => m.Date).ToList();
-    }
+        // Group by ThreadId when available (Gmail X-GM-THRID); fall back to
+        // MessageId-based linking via References / InReplyTo for non-Gmail.
+        if (self.ThreadId.HasValue)
+            return cache.Where(m => m.ThreadId == self.ThreadId).ToList();
 
-    private static bool MatchesThread(MailMessageInfo m, ulong? threadId)
-    {
-        if (threadId == null) return false;
-        if (m.ThreadId.HasValue) return m.ThreadId.Value == threadId.Value;
-        return FallbackThreadKey(m) == threadId.Value;
-    }
+        if (string.IsNullOrEmpty(self.MessageId))
+            return new() { self };
 
-    private static ulong FallbackThreadKey(MailMessageInfo m)
-    {
-        // Stable hash from MessageId so non-Gmail singletons get a unique key.
-        var key = m.MessageId ?? m.Uid.ToString();
-        unchecked
-        {
-            ulong h = 14695981039346656037UL;
-            foreach (var c in key)
-            {
-                h ^= c;
-                h *= 1099511628211UL;
-            }
-            return h;
-        }
+        // Heuristic linking: messages whose References or InReplyTo includes
+        // self.MessageId, plus self itself, plus self's own ancestors.
+        var ids = new HashSet<string>(StringComparer.Ordinal) { self.MessageId };
+        if (self.References != null) foreach (var r in self.References) ids.Add(r);
+        if (!string.IsNullOrEmpty(self.InReplyTo)) ids.Add(self.InReplyTo);
+
+        return cache.Where(m =>
+            (m.MessageId != null && ids.Contains(m.MessageId)) ||
+            (m.InReplyTo != null && ids.Contains(m.InReplyTo)) ||
+            (m.References != null && m.References.Any(r => ids.Contains(r)))
+        ).ToList();
     }
 
     private MailFolderInfo BuildFolderInfo(IMailFolder folder, string path, bool skipStatus = false)

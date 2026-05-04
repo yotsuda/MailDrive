@@ -46,7 +46,9 @@ foreach ($locale in $Locales) {
             -ModulePagePath (Join-Path $mdDir 'MailDrive.md')
     } else {
         Write-Host "Updating $locale ..." -ForegroundColor Cyan
-        $null = Update-MarkdownHelp $mdDir
+        # Update existing cmdlet docs (preserves prose, refreshes signatures)
+        # AND generate stubs for newly-added cmdlets via Update-MarkdownHelpModule.
+        $null = Update-MarkdownHelpModule -Path $mdDir -RefreshModulePage -ModulePagePath (Join-Path $mdDir 'MailDrive.md')
     }
 
     # Patch per-cmdlet online-version URLs.

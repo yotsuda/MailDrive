@@ -20,6 +20,7 @@
         'Submit-MailForward'
         'Export-MailAttachment'
         'Export-MailMessage'
+        'Show-MailMessage'
         'New-MailDraft'
         'Get-MailQuota'
         'Get-MailConfigPath'
@@ -51,6 +52,7 @@
 - Quota query via Get-MailQuota
 - Connection inspection via Get-MailDrive (shows Username / Host / Port / Ssl / Auth / SMTP / connection state)
 - Conversation threading: cd into a multi-message .eml acts as a container and dir lists every member of the thread chronologically (Gmail X-GM-THRID; falls back to References/In-Reply-To linking on other servers). Singleton-thread messages remain leaves.
+- Show-MailMessage hands a message off to the OS-default .eml viewer (Outlook, Thunderbird, MarkdownPointer if registered). With -PassThru returns the temp .eml path so AI agents can pipe to mdp_show_markdown for a CSP-protected HTML render in WebView2.
 - MailMessageInfo now exposes MessageId / InReplyTo / References / ThreadId for cross-thread reasoning
 - HasAttachments now correctly reflects MIME structure (was always False before)
 - Config-file-based drive auto-mount (Import-MailConfig)

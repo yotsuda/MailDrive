@@ -129,7 +129,7 @@ Clear-ItemProperty .\1_sender_subject.eml -Name IsFlagged
 
 | Cmdlet | Description |
 |---|---|
-| `New-ImapDrive` | Create an IMAP drive |
+| `New-MailDrive` | Create an IMAP drive |
 | `New-PopDrive` | Create a POP3 drive |
 | `Import-MailConfig` | Mount drives from config file |
 | `Open-MailConfig` | Open config in editor |
@@ -188,6 +188,25 @@ See [GREENMAIL.md](GREENMAIL.md) for local testing with GreenMail.
 .\build.ps1
 Import-Module MailDrive -Force
 ```
+
+## Help
+
+Per-cmdlet documentation lives under `docs/help/<locale>/`. English (`en-US/`)
+is the only locale shipped today; the layout supports additional locales.
+
+| Action | Command |
+|---|---|
+| View help offline | `Get-Help <cmdlet> -Full` |
+| Open online version | `Get-Help <cmdlet> -Online` |
+| Regenerate from cmdlet metadata | `.\docs\build-help.ps1` |
+
+The build script uses [PlatyPS](https://github.com/PowerShell/platyPS): it
+refreshes the markdown skeletons (preserving any prose you've written),
+patches per-cmdlet online URLs, and compiles MAML into
+`<module>/<locale>/MailDrive.dll-Help.xml` so `Get-Help` works without a
+network round trip. To bootstrap a new locale, run with
+`-Locales en-US, ja-JP` etc. — each new locale starts from scratch and is
+yours to translate.
 
 ## License
 

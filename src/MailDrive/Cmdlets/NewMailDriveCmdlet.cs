@@ -5,13 +5,13 @@ using MailKit.Security;
 
 namespace MailDrive.Cmdlets;
 
-[Cmdlet(VerbsCommon.New, "ImapDrive")]
+[Cmdlet(VerbsCommon.New, "MailDrive")]
 [OutputType(typeof(ImapDriveInfo))]
-public class NewImapDriveCmdlet : PSCmdlet
+public class NewMailDriveCmdlet : PSCmdlet
 {
     [Parameter(Position = 0)]
     [ValidateNotNullOrEmpty]
-    public string Name { get; set; } = "Imap";
+    public string Name { get; set; } = "Mail";
 
     [Parameter(Mandatory = true, Position = 1)]
     [ValidateNotNullOrEmpty]
@@ -85,7 +85,7 @@ public class NewImapDriveCmdlet : PSCmdlet
         catch (Exception ex)
         {
             driveInfo.Dispose();
-            ThrowTerminatingError(new ErrorRecord(ex, "ImapConnectionFailed",
+            ThrowTerminatingError(new ErrorRecord(ex, "MailConnectionFailed",
                 ErrorCategory.ConnectionError, Host));
             return;
         }

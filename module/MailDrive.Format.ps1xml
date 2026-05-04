@@ -7,6 +7,7 @@
       <ViewSelectedBy>
         <TypeName>MailDrive.Models.MailFolderInfo</TypeName>
         <TypeName>MailDrive.Models.MailMessageInfo</TypeName>
+        <TypeName>MailDrive.Models.MailThreadInfo</TypeName>
       </ViewSelectedBy>
       <GroupBy>
         <PropertyName>Directory</PropertyName>
@@ -14,22 +15,25 @@
       <TableControl>
         <TableHeaders>
           <TableColumnHeader><Label>Name</Label><Width>40</Width></TableColumnHeader>
-          <TableColumnHeader><Label>Date</Label><Width>12</Width></TableColumnHeader>
-          <TableColumnHeader><Label>From</Label><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Label>Date</Label></TableColumnHeader>
+          <TableColumnHeader><Label>From</Label></TableColumnHeader>
           <TableColumnHeader><Label>Subject</Label></TableColumnHeader>
-          <TableColumnHeader><Label>Size</Label><Width>8</Width><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Size</Label><Alignment>Right</Alignment></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
               <TableColumnItem>
                 <ScriptBlock>
+                  $esc = [char]0x1b
+                  $reset = "${esc}[0m"
                   if ($_ -is [MailDrive.Models.MailFolderInfo]) {
-                    $esc = [char]0x1b
                     $blue = "${esc}[34;1m"
-                    $reset = "${esc}[0m"
                     $info = if ($_.MessageCount -gt 0) { " ($($_.MessageCount)/$($_.UnreadCount))" } else { "" }
                     "${blue}$($_.Name)/${reset}${info}"
+                  } elseif ($_ -is [MailDrive.Models.MailThreadInfo]) {
+                    $cyan = "${esc}[36;1m"
+                    "${cyan}$($_.Name)/${reset}"
                   } else {
                     $_.FileName
                   }
@@ -37,17 +41,28 @@
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
-                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { "{0:MM/dd HH:mm}" -f $_.Date } else { "" }
+                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { "{0:MM/dd HH:mm}" -f $_.Date }
+                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { "{0:MM/dd HH:mm}" -f $_.LatestDate }
+                  else { "" }
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
-                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { $_.From } else { "" }
+                  if ($_ -is [MailDrive.Models.MailMessageInfo]) { $_.From }
+                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { $_.Participants }
+                  else { "" }
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>
                   if ($_ -is [MailDrive.Models.MailFolderInfo]) { $_.Attributes }
+                  elseif ($_ -is [MailDrive.Models.MailThreadInfo]) {
+                    $marks = ''
+                    if ($_.HasUnread)      { $marks += '*' }
+                    if ($_.HasFlagged)     { $marks += '!' }
+                    if ($_.HasAttachments) { $marks += '@' }
+                    if ($marks) { "$marks $($_.Subject)" } else { $_.Subject }
+                  }
                   else { $_.Subject }
                 </ScriptBlock>
               </TableColumnItem>
@@ -57,8 +72,48 @@
                     if ($_.Size -ge 1MB) { "{0:N1}M" -f ($_.Size / 1MB) }
                     elseif ($_.Size -ge 1KB) { "{0:N0}K" -f ($_.Size / 1KB) }
                     else { $_.Size }
-                  } else { "" }
+                  } elseif ($_ -is [MailDrive.Models.MailThreadInfo]) { "$($_.MessageCount)" }
+                  else { "" }
                 </ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <View>
+      <Name>MailDriveInfo</Name>
+      <ViewSelectedBy>
+        <TypeName>MailDrive.Cmdlets.MailDriveInfo</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Label>Name</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Protocol</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Username</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Host</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Port</Label><Alignment>Right</Alignment></TableColumnHeader>
+          <TableColumnHeader><Label>Ssl</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Auth</Label></TableColumnHeader>
+          <TableColumnHeader><Label>Smtp</Label></TableColumnHeader>
+          <TableColumnHeader><Label>State</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>Name</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Protocol</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Username</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Host</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Port</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Ssl</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>AuthMethod</PropertyName></TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.HasSmtp) { "$($_.SmtpHost):$($_.SmtpPort)" } else { '-' }</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.IsAuthenticated) { 'Auth' } elseif ($_.IsConnected) { 'Connected' } else { 'Idle' }</ScriptBlock>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

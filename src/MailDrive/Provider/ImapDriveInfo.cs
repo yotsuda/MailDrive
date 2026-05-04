@@ -23,14 +23,22 @@ public class ImapDriveInfo : MailDriveInfoBase
     public ImapDriveInfo(PSDriveInfo driveInfo, string host, int port, SecureSocketOptions ssl,
         string username, string password,
         string? smtpHost = null, int smtpPort = 587, SecureSocketOptions smtpSsl = SecureSocketOptions.Auto,
-        bool useOAuth2 = false, string? tenantId = null, string? clientId = null)
+        bool useOAuth2 = false, string? tenantId = null, string? clientId = null,
+        bool useDeviceCode = false)
         : base(driveInfo, username, password, smtpHost, smtpPort, smtpSsl, $"imaps://{host}:{port}",
-               useOAuth2, tenantId, clientId)
+               useOAuth2, tenantId, clientId, useDeviceCode)
     {
         _host = host;
         _port = port;
         _ssl = ssl;
     }
+
+    public override string Protocol => "IMAP";
+    public override string Host => _host;
+    public override int Port => _port;
+    public override SecureSocketOptions Ssl => _ssl;
+    public override bool IsConnected => _client?.IsConnected ?? false;
+    public override bool IsAuthenticated => _client?.IsAuthenticated ?? false;
 
     public ImapClient Client
     {
@@ -53,7 +61,7 @@ public class ImapDriveInfo : MailDriveInfoBase
             _client.Connect(_host, _port, _ssl);
             if (UseOAuth2)
             {
-                var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId);
+                var token = OAuth2Helper.AcquireToken(MailUsername, TenantId, ClientId, UseDeviceCode);
                 _client.Authenticate(new MailKit.Security.SaslMechanismOAuth2(MailUsername, token));
             }
             else

@@ -63,7 +63,7 @@ cd C:\MyProj\MailDrive
 
 ```powershell
 Import-Module MailDrive
-New-ImapDrive -Host imap.gmail.com -Username 'user@gmail.com' -Password 'xxxx xxxx xxxx xxxx' -SmtpHost smtp.gmail.com
+New-MailDrive -Host imap.gmail.com -Username 'user@gmail.com' -Password 'xxxx xxxx xxxx xxxx' -SmtpHost smtp.gmail.com
 ```
 
 ### 3. 基本操作
@@ -142,7 +142,7 @@ Remove-PSDrive Pop
 
 ```powershell
 # 設定ファイルの作成・編集
-Edit-MailConfig
+Open-MailConfig
 
 # 設定ファイルからドライブを一括マウント
 Import-MailConfig
@@ -153,7 +153,7 @@ Import-MailConfig -Force
 
 ## 確認ポイント (IMAP)
 
-- [ ] `New-ImapDrive` で接続が成功する
+- [ ] `New-MailDrive` で接続が成功する
 - [ ] `ls` でフォルダ一覧が表示される (Name, Messages, Unread, Subfolders, Attributes)
 - [ ] `cd INBOX` → `ls` でメッセージ一覧が表示される (Uid, Date, From, Subject, Read, Size)
 - [ ] Tab 補完でフォルダ名・メッセージ名が補完される
@@ -177,11 +177,11 @@ Import-MailConfig -Force
 - [ ] `Send-Mail` でメールが送信される
 - [ ] `-Attachments` で添付ファイル付き送信ができる
 - [ ] `-Html` で HTML メールが送信される
-- [ ] `-DriveName` で使用ドライブを指定できる
+- [ ] `-Path` で使用ドライブを指定できる
 
 ## 確認ポイント (設定ファイル)
 
-- [ ] `Edit-MailConfig` で設定ファイルが作成され notepad で開く
+- [ ] `Open-MailConfig` で設定ファイルが作成され notepad で開く
 - [ ] `Import-MailConfig` で IMAP / POP3 ドライブが自動マウントされる
 - [ ] モジュールインポート時に `InitializeDefaultDrives` で自動マウントされる
 - [ ] `-Force` で既存ドライブが再作成される

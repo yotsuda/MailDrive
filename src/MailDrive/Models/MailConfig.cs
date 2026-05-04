@@ -18,7 +18,7 @@ public class MailSettings
     public int? SmtpPort { get; set; }
     public string? SmtpSsl { get; set; }
 
-    /// <summary>"Password" (default) or "OAuth2"</summary>
+    /// <summary>"Password" (default), "OAuth2" (PKCE), or "DeviceCode"</summary>
     public string? AuthMethod { get; set; }
     public string? TenantId { get; set; }
     public string? ClientId { get; set; }
@@ -36,7 +36,11 @@ public class MailSettings
     }
 
     internal bool IsOAuth2 =>
-        string.Equals(AuthMethod, "OAuth2", StringComparison.OrdinalIgnoreCase);
+        string.Equals(AuthMethod, "OAuth2", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(AuthMethod, "DeviceCode", StringComparison.OrdinalIgnoreCase);
+
+    internal bool IsDeviceCode =>
+        string.Equals(AuthMethod, "DeviceCode", StringComparison.OrdinalIgnoreCase);
 }
 
 public class MailConfig : MailSettings

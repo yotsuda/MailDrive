@@ -159,6 +159,14 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
                 }
                 catch { return false; }
                 finally { TryClose(folder); }
+            case PathType.ThreadsContainer:
+                // Virtual folder under any real IMAP folder.
+                return Drive.TryGetImapFolder(info.ImapFolderPath) != null;
+            case PathType.Thread:
+                // Exists if at least one cached message has this ThreadId.
+                if (info.ThreadId == null) return false;
+                var cached = Drive.GetCachedMessages(info.ImapFolderPath);
+                return cached?.Any(m => MatchesThread(m, info.ThreadId)) ?? false;
         }
         return false;
     }
@@ -169,7 +177,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
     protected override bool HasChildItems(string path)
     {
         var info = ImapPathInfo.Parse(NormalizePath(path));
-        return info.Type != PathType.Message;
+        return info.IsContainer;
     }
 
     // ── GetItem ─────────────────────────────────────────────────
@@ -193,7 +201,46 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             case PathType.Message:
                 var msg = FetchMessage(info);
                 if (msg != null)
+                {
+                    if (info.ThreadId.HasValue)
+                    {
+                        msg.Path = path;
+                        msg.Directory = path[..path.LastIndexOf('\\')];
+                    }
                     WriteItemObject(msg, path, false);
+                }
+                break;
+            case PathType.ThreadsContainer:
+                WriteItemObject(new MailFolderInfo
+                {
+                    Path = path,
+                    Name = ImapPathInfo.ThreadsSegment,
+                    FullName = ImapPathInfo.ThreadsSegment,
+                    Attributes = "Virtual",
+                    SubfolderCount = 1,
+                }, path, true);
+                break;
+            case PathType.Thread:
+                if (info.ThreadId.HasValue)
+                {
+                    var threadMsgs = GetThreadMessages(info, EnsureDrivePrefix(path), 100);
+                    if (threadMsgs.Count > 0)
+                    {
+                        var latest = threadMsgs.MaxBy(m => m.Date) ?? threadMsgs[0];
+                        WriteItemObject(new MailThreadInfo
+                        {
+                            Path = path,
+                            ThreadId = info.ThreadId.Value,
+                            Name = info.ThreadSegment ?? "",
+                            Subject = latest.Subject,
+                            MessageCount = threadMsgs.Count,
+                            LatestDate = latest.Date,
+                            HasUnread = threadMsgs.Any(m => !m.IsRead),
+                            HasAttachments = threadMsgs.Any(m => m.HasAttachments),
+                            HasFlagged = threadMsgs.Any(m => m.IsFlagged),
+                        }, path, true);
+                    }
+                }
                 break;
         }
     }
@@ -212,11 +259,35 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
         if (Force)
         {
-            Drive.InvalidateFolders(norm);
-            Drive.InvalidateMessages(norm);
+            Drive.InvalidateFolders(info.ImapFolderPath);
+            Drive.InvalidateMessages(info.ImapFolderPath);
         }
 
-        var subfolders = GetCachedSubfolders(norm, directory, skipStatus: true);
+        // Threads/ virtual folder — list MailThreadInfo grouped from cached messages.
+        if (info.Type == PathType.ThreadsContainer)
+        {
+            var threads = BuildThreads(info.ImapFolderPath, directory, first);
+            foreach (var t in threads)
+            {
+                if (Stopping) return;
+                WriteItemObject(t, t.Path, true);
+            }
+            return;
+        }
+
+        // Inside a specific thread — list its messages with rebased path.
+        if (info.Type == PathType.Thread)
+        {
+            var msgs = GetThreadMessages(info, directory, first);
+            foreach (var m in msgs)
+            {
+                if (Stopping) return;
+                WriteItemObject(m, m.Path, false);
+            }
+            return;
+        }
+
+        var subfolders = GetCachedSubfolders(info.ImapFolderPath, directory, skipStatus: true);
         List<string>? containers = recurse ? new() : null;
         foreach (var fi in subfolders)
         {
@@ -225,12 +296,29 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             if (recurse) containers!.Add(fi.Path);
         }
 
+        if (info.Type == PathType.Folder)
+        {
+            // Inject the Threads/ virtual subfolder at the top of the message list.
+            var threadsPath = EnsureDrivePrefix(MakePath(path, ImapPathInfo.ThreadsSegment));
+            var threadsFolder = new MailFolderInfo
+            {
+                Path = threadsPath,
+                Name = ImapPathInfo.ThreadsSegment,
+                FullName = ImapPathInfo.ThreadsSegment,
+                Attributes = "Virtual",
+                SubfolderCount = 1,
+                Directory = directory,
+            };
+            WriteItemObject(threadsFolder, threadsPath, true);
+            if (recurse) containers!.Add(threadsPath);
+        }
+
         if (info.Type != PathType.Root)
         {
             var search = paging?.Search;
             var messages = string.IsNullOrEmpty(search)
-                ? GetCachedMessages(norm, directory, first)
-                : SearchMessages(norm, directory, search, first);
+                ? GetCachedMessages(info.ImapFolderPath, directory, first)
+                : SearchMessages(info.ImapFolderPath, directory, search, first);
             foreach (var msg in messages)
             {
                 if (Stopping) return;
@@ -802,7 +890,11 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
     private List<MailMessageInfo> GetCachedMessages(string normalizedPath, string directory, int first)
     {
         var cached = Drive.GetCachedMessages(normalizedPath);
-        if (cached != null) return cached;
+        // Cache hit: honor `first` by slicing. If the request exceeds what's cached,
+        // fall through and refetch — otherwise -First N would forever be capped to
+        // whatever the first call happened to fetch.
+        if (cached != null && cached.Count >= first)
+            return cached.Take(first).ToList();
 
         var folder = Drive.TryGetImapFolder(normalizedPath);
         if (folder == null || !folder.Exists) return [];
@@ -815,9 +907,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             if (count > 0)
             {
                 int start = Math.Max(0, count - first);
-                var summaries = folder.Fetch(start, -1,
-                    MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
-                    MessageSummaryItems.Flags | MessageSummaryItems.Size);
+                var summaries = folder.Fetch(start, -1, ListSummaryItems());
 
                 var parentPath = EnsureDrivePrefix(normalizedPath);
                 foreach (var summary in summaries.Reverse())
@@ -858,9 +948,7 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             var targetUids = uids.Reverse().Take(first).ToList();
             if (targetUids.Count == 0) return [];
 
-            var summaries = folder.Fetch(targetUids,
-                MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope |
-                MessageSummaryItems.Flags | MessageSummaryItems.Size);
+            var summaries = folder.Fetch(targetUids, ListSummaryItems());
 
             var parentPath = EnsureDrivePrefix(normalizedPath);
             var result = new List<MailMessageInfo>();
@@ -939,6 +1027,87 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
         try { if (folder.IsOpen) folder.Close(false); } catch { }
     }
 
+    // ── Threads (virtual folder over messages grouped by ThreadId) ───────
+
+    private List<MailThreadInfo> BuildThreads(string imapFolderPath, string directory, int first)
+    {
+        // Source from cached message listing — Gmail X-GM-THRID is included in
+        // the standard fetch when IsGmail. For non-Gmail without thread support
+        // ThreadId will be null and each message becomes its own singleton thread.
+        var msgs = GetCachedMessages(imapFolderPath, directory, first);
+        var folderDirPath = EnsureDrivePrefix(imapFolderPath);
+        var threadsBase = MakePath(folderDirPath, ImapPathInfo.ThreadsSegment);
+
+        // Group by ThreadId, fall back to MessageId for messages without ThreadId.
+        var groups = msgs.GroupBy(m => m.ThreadId ?? FallbackThreadKey(m));
+        var result = new List<MailThreadInfo>();
+        foreach (var g in groups)
+        {
+            ulong threadId = g.Key;
+            var members = g.ToList();
+            var latest = members.MaxBy(m => m.Date) ?? members[0];
+            var seg = ImapPathInfo.BuildThreadSegment(threadId, latest.Subject);
+            var path = EnsureDrivePrefix(MakePath(threadsBase, seg));
+            var participants = string.Join(", ", members
+                .SelectMany(m => new[] { m.From }).Where(s => !string.IsNullOrEmpty(s))
+                .Distinct().Take(3));
+            result.Add(new MailThreadInfo
+            {
+                Path = path,
+                Directory = threadsBase,
+                ThreadId = threadId,
+                Name = seg,
+                Subject = latest.Subject,
+                Participants = participants,
+                MessageCount = members.Count,
+                LatestDate = latest.Date,
+                HasUnread = members.Any(m => !m.IsRead),
+                HasAttachments = members.Any(m => m.HasAttachments),
+                HasFlagged = members.Any(m => m.IsFlagged),
+            });
+        }
+        return result.OrderByDescending(t => t.LatestDate).ToList();
+    }
+
+    private List<MailMessageInfo> GetThreadMessages(ImapPathInfo info, string directory, int first)
+    {
+        var folderDirPath = EnsureDrivePrefix(info.ImapFolderPath);
+        var threadDirPath = EnsureDrivePrefix(
+            MakePath(MakePath(folderDirPath, ImapPathInfo.ThreadsSegment), info.ThreadSegment ?? ""));
+        var msgs = GetCachedMessages(info.ImapFolderPath, directory, first);
+        var members = msgs.Where(m => MatchesThread(m, info.ThreadId)).ToList();
+        // Rebase paths so cat/mv/del work via the thread-qualified path.
+        foreach (var m in members)
+        {
+            m.Directory = threadDirPath;
+            m.Path = EnsureDrivePrefix(MakePath(threadDirPath, m.FileName));
+        }
+        return members.OrderBy(m => m.Date).ToList();
+    }
+
+    private static bool MatchesThread(MailMessageInfo m, ulong? threadId)
+    {
+        if (threadId == null) return false;
+        if (m.ThreadId.HasValue) return m.ThreadId.Value == threadId.Value;
+        return FallbackThreadKey(m) == threadId.Value;
+    }
+
+    private static ulong FallbackThreadKey(MailMessageInfo m)
+    {
+        // Stable hash from MessageId so non-Gmail singletons get a unique key.
+        var key = m.MessageId ?? m.Uid.ToString();
+        unchecked
+        {
+            ulong h = 14695981039346656037UL;
+            foreach (var c in key)
+            {
+                h ^= c;
+                h *= 1099511628211UL;
+            }
+            return h;
+        }
+    }
+
     private MailFolderInfo BuildFolderInfo(IMailFolder folder, string path, bool skipStatus = false)
     {
         var status = skipStatus ? (count: 0, unread: 0) : GetFolderStatus(folder);
@@ -970,15 +1139,29 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
 
     private int GetSubfolderCount(IMailFolder folder)
     {
-        try { return folder.GetSubfolders(false).Count; }
-        catch { return 0; }
+        // Use LIST attributes from the parent's GetSubfolders response — no extra round trip.
+        // 1 = "has at least one subfolder" (exact count would require N+1 LIST commands).
+        return folder.Attributes.HasFlag(FolderAttributes.HasChildren) ? 1 : 0;
+    }
+
+    // Standard summary items for listing — BodyStructure for HasAttachments,
+    // GMailThreadId conditionally for thread grouping. References enables
+    // client-side conversation threading on non-Gmail servers.
+    private MessageSummaryItems ListSummaryItems()
+    {
+        var items = MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope
+                  | MessageSummaryItems.Flags | MessageSummaryItems.Size
+                  | MessageSummaryItems.BodyStructure | MessageSummaryItems.References;
+        if (Drive.IsGMail)
+            items |= MessageSummaryItems.GMailThreadId;
+        return items;
     }
 
     private MailMessageInfo BuildMessageInfo(IMessageSummary summary, string parentPath)
     {
         var envelope = summary.Envelope;
         var fileName = BuildMessageFileName(summary);
-        return new MailMessageInfo
+        var msg = new MailMessageInfo
         {
             Path = EnsureDrivePrefix(MakePath(parentPath, fileName)),
             Uid = summary.UniqueId.Id,
@@ -993,7 +1176,12 @@ public class ImapDriveProvider : NavigationCmdletProvider, IContentCmdletProvide
             IsDraft = summary.Flags?.HasFlag(MessageFlags.Draft) ?? false,
             HasAttachments = summary.Attachments?.Any() ?? false,
             Size = (int)(summary.Size ?? 0),
+            MessageId = envelope.MessageId,
+            InReplyTo = envelope.InReplyTo,
+            References = summary.References?.Count > 0 ? summary.References.ToArray() : null,
+            ThreadId = summary.GMailThreadId,
         };
+        return msg;
     }
 
     private string BuildMessageFileName(IMessageSummary summary)

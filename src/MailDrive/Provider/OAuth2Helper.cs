@@ -20,7 +20,8 @@ internal static class OAuth2Helper
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MailDrive", "msal_cache.bin");
 
-    internal static string AcquireToken(string username, string? tenantId, string? clientId)
+    internal static string AcquireToken(string username, string? tenantId, string? clientId,
+        bool useDeviceCode = false)
     {
         var tid = tenantId ?? DefaultTenantId;
         var cid = clientId ?? DefaultClientId;
@@ -32,7 +33,10 @@ internal static class OAuth2Helper
             .WithDefaultRedirectUri()
             .Build();
 
-        EnableTokenCache(app);
+        // Device Code: persist tokens to file (re-auth is cumbersome)
+        // PKCE: memory-only cache (re-auth is easy via browser)
+        if (useDeviceCode)
+            EnableFileTokenCache(app);
 
         // Try silent first (cached token)
         try
@@ -49,17 +53,28 @@ internal static class OAuth2Helper
         }
         catch (MsalUiRequiredException) { }
 
-        // Interactive: Device Code Flow (works in terminal)
-        var result = app.AcquireTokenWithDeviceCode(ImapScopes, callback =>
+        AuthenticationResult result;
+        if (useDeviceCode)
         {
-            Console.Error.WriteLine(callback.Message);
-            return Task.CompletedTask;
-        }).ExecuteAsync().GetAwaiter().GetResult();
+            // Device Code Flow — for headless/SSH environments
+            result = app.AcquireTokenWithDeviceCode(ImapScopes, callback =>
+            {
+                Console.Error.WriteLine(callback.Message);
+                return Task.CompletedTask;
+            }).ExecuteAsync().GetAwaiter().GetResult();
+        }
+        else
+        {
+            // Authorization Code Flow + PKCE — default, browser-based
+            result = app.AcquireTokenInteractive(ImapScopes)
+                .WithLoginHint(username)
+                .ExecuteAsync().GetAwaiter().GetResult();
+        }
 
         return result.AccessToken;
     }
 
-    private static void EnableTokenCache(IPublicClientApplication app)
+    private static void EnableFileTokenCache(IPublicClientApplication app)
     {
         var dir = Path.GetDirectoryName(TokenCachePath)!;
         Directory.CreateDirectory(dir);

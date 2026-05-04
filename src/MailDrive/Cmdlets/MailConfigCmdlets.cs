@@ -20,7 +20,7 @@ public class ImportMailConfigCmdlet : PSCmdlet
         if (!File.Exists(configPath))
         {
             WriteWarning($"Config not found: {configPath}");
-            WriteWarning("Run Edit-MailConfig to create one.");
+            WriteWarning("Run Open-MailConfig to create one.");
             return;
         }
 
@@ -93,7 +93,9 @@ public class ImportMailConfigCmdlet : PSCmdlet
                 var dp = new PSDriveInfo(settings.Name, provider, settings.Name + @":\", desc, null);
                 driveInfo = new PopDriveInfo(dp, settings.Host, port, ssl,
                     settings.Username ?? "", settings.Password ?? "",
-                    settings.SmtpHost, smtpPort, smtpSsl);
+                    settings.SmtpHost, smtpPort, smtpSsl,
+                    settings.IsOAuth2, settings.TenantId, settings.ClientId,
+                    settings.IsDeviceCode);
             }
             else
             {
@@ -104,7 +106,9 @@ public class ImportMailConfigCmdlet : PSCmdlet
                 var dp = new PSDriveInfo(settings.Name, provider, settings.Name + @":\", desc, null);
                 driveInfo = new ImapDriveInfo(dp, settings.Host, port, ssl,
                     settings.Username ?? "", settings.Password ?? "",
-                    settings.SmtpHost, smtpPort, smtpSsl);
+                    settings.SmtpHost, smtpPort, smtpSsl,
+                    settings.IsOAuth2, settings.TenantId, settings.ClientId,
+                    settings.IsDeviceCode);
             }
 
             SessionState.Drive.New(driveInfo, "global");

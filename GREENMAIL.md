@@ -52,7 +52,7 @@ Import-Module MailDrive -Force
 ### 2. IMAP ドライブ作成
 
 ```powershell
-New-ImapDrive -Name GM -Host localhost -Port 3143 -Ssl None -Username test -Password test -SmtpHost localhost -SmtpPort 3025 -SmtpSsl None
+New-MailDrive -Name GM -Host localhost -Port 3143 -Ssl None -Username test -Password test -SmtpHost localhost -SmtpPort 3025 -SmtpSsl None
 ```
 
 ### 3. POP3 ドライブ作成

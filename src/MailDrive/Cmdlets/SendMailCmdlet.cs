@@ -71,7 +71,7 @@ public class SendMailCmdlet : PSCmdlet
         smtp.Connect(drive.SmtpHost!, drive.SmtpPort, drive.SmtpSsl);
         if (drive.UseOAuth2)
         {
-            var token = Provider.OAuth2Helper.AcquireToken(drive.MailUsername, drive.TenantId, drive.ClientId);
+            var token = Provider.OAuth2Helper.AcquireToken(drive.MailUsername, drive.TenantId, drive.ClientId, drive.UseDeviceCode);
             smtp.Authenticate(new MailKit.Security.SaslMechanismOAuth2(drive.MailUsername, token));
         }
         else
